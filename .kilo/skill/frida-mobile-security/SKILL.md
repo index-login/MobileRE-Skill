@@ -1,6 +1,6 @@
 ---
 name: frida-mobile-security
-description: 用于 Android/iOS 移动应用安全逆向分析：Frida 动态插桩、绕过反调试/反注入/加固壳、脱壳、加密与 native SO 层 hook、运行时行为分析、jadx-mcp 静态攻击面分析。用户提到"绕过检测/闪退/脱壳/加密/抓包/行为摸底/内存扫描/分析 so/检查证书"等意图时使用。
+description: 用于 Android/iOS 移动应用安全逆向分析：Frida 动态插桩、绕过反调试/反注入/加固壳、脱壳、加密与 native SO 层 hook、运行时行为分析、jadx-mcp 静态攻击面分析。内置工具链：一键脱壳 unpack.py、ELF 侦察 elfinfo.py、监控/绕过模块、独立检测工具（注入/调试/签名）。用户提到"绕过检测/闪退/脱壳/加密/抓包/行为摸底/内存扫描/分析 so/ELF 侦察/检查证书"等意图时使用。
 ---
 
 # Frida Mobile Security — 逆向分析总控
@@ -141,7 +141,9 @@ frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/memory_scanner.
 | `dex_dedupe.py` | 产物去重/校验 | unpacking |
 | `find_strref.py` | 字符串引用定位 | native-analysis |
 | `find_branch_callers.py` | 交叉引用/调用者定位 | native-analysis |
+| `elfinfo.py` | ELF 侦察（段/依赖/导出/导入/重定位/vaddr↔offset，模拟 harness 前置） | native-analysis |
 | `fix_elf.py` | 修复 ELF header | unpacking |
+| `fix_axml.py` | 修复爱加密魔改 AXML（Manifest 多 4 字节填充+headerSize 谎报 0x000C，jadx/apktool 无法解析时用） | static-analysis |
 | `patch_gadget_threadnames.py` | patch gadget 线程名 | native-analysis |
 | `scan_inline_svc.py` | 扫描内联 SVC 指令 | native-analysis |
 | `scan_register_natives.js` | 定位 native 方法实现（Dex2C 按需分析） | native-analysis |
@@ -193,15 +195,18 @@ var CONFIG_OVERRIDE = {
 
 ## 六、独立检测工具（前置，无需 Frida）
 
-`tools/` 下 bat 脚本，Agent 不能代跑，输出命令让用户自行执行（方便截图取证）。
+`tools/` 下 bat 脚本，Agent 不能代跑，输出命令让用户自行执行（方便截图取证）。Python 工具可直接跑（`python3 tools/janus_check.py ...`、`python tools/debug-gdb.py ...`，注意本机 `python` 可能是 Python 2，用 `py -3`）。
 
 | 工具 | 检测目标 | 用法 |
 |------|---------|------|
 | `check-anti-inject.bat` | 防注入（ptrace + /proc/pid/mem） | `tools/check-anti-inject.bat <包名>` |
-| `debug-gdb.bat` | 防调试（ptrace / TracerPid） | `tools/debug-gdb.bat <包名>` |
-| `check-janus.bat` | APK 元数据提取 | `tools/check-janus.bat <apk路径>` |
+| `debug-gdb.py` | 防调试（ptrace / TracerPid） | `py -3 tools/debug-gdb.py <包名>` |
+| `check-janus.bat` | APK 元数据提取（GetAPKInfo.jar） | `tools/check-janus.bat <apk路径>` |
+| `janus_check.py` | **Janus 备选检测**：apksigner V1/V2/V3 签名验证（不解析 Manifest，免疫加固魔改） | `python3 tools/janus_check.py <apk路径>` |
 
-首次分析新 App：check-janus → debug-gdb → check-anti-inject → Frida Phase 1。所有工具前置条件：root + SELinux Permissive。
+首次分析新 App：check-janus → debug-gdb → check-anti-inject → Frida Phase 1。所有工具前置条件：root + SELinux Permissive。注意 `debug-gdb.py` 附加成功后目标若被反调试杀死，属于**检测到反调试**（正结论），非工具失败。
+
+**GetAPKInfo.jar 解析失败（爱加密等魔改 Manifest，报 `0x000c0003`）时，直接用 `janus_check.py`**——经 apksigner 验证签名方案（V1+V2 通过 = Janus 安全），效果与 GetAPKInfo.jar 一致。
 
 ---
 

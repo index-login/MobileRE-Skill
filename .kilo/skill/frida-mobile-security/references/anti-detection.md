@@ -7,7 +7,7 @@
 
 ## 前置快速检测（无需 Frida，独立工具）
 
-- `tools/debug-gdb.bat <包名>` — ptrace 反调试检测（TracerPid + 进程存活）
+- `tools/debug-gdb.py <包名>`（`py -3` 运行）— ptrace 反调试检测（TracerPid + 进程存活）；附加成功但进程随后消失 = 存在反调试
 - `tools/check-anti-inject.bat <包名>` — SO 注入检测（ptrace + mem 注入）
 - `tools/check-janus.bat <apk路径>` — APK 元数据提取
 

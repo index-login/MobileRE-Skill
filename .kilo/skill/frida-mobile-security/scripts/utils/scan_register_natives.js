@@ -23,6 +23,9 @@
         onlyAppSo: true,
         // 扫描 app 私有 SO 的静态导出符号（Java_xxx），兜底 RegisterNatives 未捕获的情况
         scanStaticExports: true,
+        // 解析真实类名（Java.perform + Java.cast）。注意：Android 10 上壳早期注册会
+        // stale Local 崩溃（native abort，try/catch 救不了），默认关；Android 14/attach 模式可开
+        resolveClassName: false,
     });
 
     var registered = 0;
@@ -117,13 +120,19 @@
                     var methods = args[2];
                     var count = args[3].toInt32();
 
-                    // 类名用 Java.perform + Java.cast（getClassName 在 libart 不可靠）
+                    // 注意：RegisterNatives 是 ART 内部函数，回调里调用 Java API 有崩溃风险
+                    // （Java.perform/Java.cast 可能重入 ART 或访问 stale Local）
+                    // 默认纯 native 读取（稳定）；resolveClassName:true 时尝试解析类名
                     var className = "class@" + jclass;
-                    try {
-                        Java.perform(function () {
-                            className = Java.cast(jclass, Java.use("java.lang.Class")).getName();
-                        });
-                    } catch (e) {}
+                    if (CONFIG.resolveClassName) {
+                        try {
+                            Java.perform(function () {
+                                className = Java.cast(jclass, Java.use("java.lang.Class")).getName();
+                            });
+                        } catch (e) {
+                            className = "class@" + jclass;
+                        }
+                    }
 
                     for (var i = 0; i < count; i++) {
                         var m = methods.add(i * 3 * Process.pointerSize);

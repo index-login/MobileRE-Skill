@@ -88,7 +88,7 @@ Object ret = vm.callStaticJniMethodObject(emulator,
 // 3. 拿到密文，对比真机 hook 结果验证
 ```
 
-- 依赖：`pip install unidbg`（Java 库，需 JDK）+ 目标 so 从设备 `adb pull`
+- 依赖：JDK + Maven/Gradle 工程（unidbg 是 Java 库，非 pip 包；Maven 坐标 `com.github.zhkl0228:unidbg-android`）+ 目标 so 从设备 `adb pull`
 - 优点：不碰真机、不碰 IDA、可断点/打桩/打印中间值
 - 代价：环境搭建一次（约 1 小时），JNI 打桩需按目标类补
 

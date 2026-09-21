@@ -27,13 +27,15 @@
 
 | 场景 | 一句话需求示例 | AI 会做什么 |
 |------|---------------|------------|
-| 🎯 **加固脱壳** | "帮我脱壳这个 App" | 一键脱壳：默认回填、修复、去重、方法体标记，产物直接可分析 |
+| 🎯 **加固脱壳** | "帮我脱壳这个 App" | 多种方式按场景选择：一键脱壳（默认回填/修复/去重/方法体标记）；或内存 DEX dump（panda/mem 双 dumper，ptrace-free，反调试下更隐蔽） |
 | 🔐 **加密分析** | "看下这个 App 的加密算法和密钥" | Java + Native 双层加解密自吐，给出算法/密钥/IV/明文 |
 | 🛡️ **反检测绕过** | "挂上 Frida 就闪退，帮我绕过" | 6 阶段 Pipeline：定位检测 SO → 抢 init_array → 保活 → NOP 闪退函数 |
 | 🔍 **行为摸底** | "这个 App 偷偷干了什么" | 文件/网络/线程/进程/Intent 全程监控，输出行为画像 |
 | 🧩 **Dex2C/VMP 分析** | "这个加密是 native 的，帮我分析逻辑" | 定位 `so+offset`，hook 优先 / unidbg 复现 / Ghidra 伪代码 |
 | 🧬 **静态攻击面** | "帮我审计这个 App 的攻击面" | 从 Manifest 枚举 exported 组件/Provider/WebView，source→sink 追踪 |
 | 🧪 **安全合规测试** | "帮我检查这个 App 的安全合规" | 自动运行合规检测（注入/调试/WebView SSL/元数据），出具结果 |
+| 🧷 **SO 符号/结构恢复** | "这个 so 去符号了，帮我还原函数名和结构体" | 离线 ELF 侦察（`elfinfo`/`find_*`）→ Ghidra MCP 交叉引用推理 → 重命名 + 结构定义 |
+| 🦄 **离线模拟执行** | "不跑真机，帮我模拟这个 native 函数" | Unicorn 加载 .so，JNI/libc/syscall 打桩，直接跑目标函数拿结果 |
 
 > 所有操作由 AI 完成，你不需要手敲命令或运行脚本。
 
@@ -41,24 +43,13 @@
 
 ## 这是什么
 
-这不是一个"Frida 脚本合集"，而是一个 **AI 逆向分析 Agent 的完整技能系统**：
+一个 **AI 逆向分析 Agent 的完整技能系统**，不是脚本合集：
 
-- 🧠 **Agent 大脑**（`.kilo/agent/reverser.md`）— 逆向分析高级研究员的角色定义，知道怎么决策
-- 📚 **领域知识**（`.kilo/skill/`）— 9 大技巧域手册：脱壳、反检测、加密分析、行为分析、静态攻击面、Native 逆向、故障诊断
-- 🔧 **能力单元**（`scripts/`）— 22 个 Frida 模块 + 6 个 Python 二进制工具 + 检测清单
-- 🛠️ **合规检测能力** — 针对注入、调试、WebView SSL、APK 元数据的检测项
+- 🧠 **Agent 大脑**（`.kilo/agent/reverser.md`）— 逆向分析角色定义，按决策树自动选模块
+- 📚 **领域知识**（`.kilo/skill/`）— 动态分析总控（9 大技巧域）+ Native 深度能力（符号/结构恢复、离线模拟执行、内存 DEX 脱壳）
+- 🔧 **能力单元**（`scripts/`）— 23 个 Frida 模块（monitors 14 + bypass 9）+ 16 个二进制/修复工具 + 检测清单
+- 🛠️ **合规检测** — 注入、调试、WebView SSL、APK 元数据/签名
 - 🔌 **MCP 集成**（`kilo.json`）— jadx-mcp（Java 反编译）+ ghidra-mcp（二进制分析）
-
-## 为什么做这个
-
-市面上的逆向输出大多是**孤立的单点脚本**：一个加解密自吐、一个文件监控、一个 Root 绕过。每次新项目都要重新拼凑，遇到加固或反检测时单点工具一碰就崩。
-
-这个 Skill 把碎片化能力整合成 **AI 可理解的模块系统**：
-
-- **AI 按决策树自动选模块**，不靠人肉记忆
-- **`-l` 参数自由组合**，场景驱动，不互相依赖
-- **分层递推**：`Java → JNI → Native → libc → syscall → SVC`，上层被绕自动下钻
-- **反馈闭环**：走不通的路径、崩溃模块、缺失能力自动记录到 `feedback/`
 
 ## 与传统工具箱的区别
 
@@ -83,20 +74,20 @@
 │  feedback/FEEDBACK.md     — 分析过程反馈闭环                │
 ├────────────────────────────────────────────────────────────┤
 │               Frida 动态 Hook 模块                          │
-│  monitors/ (13 个) — 纯观察，不修改行为                     │
+│  monitors/ (14 个) — 纯观察，不修改行为                     │
 │  bypass/   (9 个)  — 主动干预，修改 app 行为                │
 │  utils/            — 脱壳/反编译/符号分析工具               │
 ├────────────────────────────────────────────────────────────┤
 │               Python 二进制分析工具                          │
-│  find_branch_callers · find_strref · fix_elf               │
-│  scan_inline_svc · patch_gadget_threadnames · so_dump      │
+│  elfinfo · find_branch_callers · find_strref · fix_elf     │
+│  fix_axml · scan_inline_svc · so_dump · hap_parser         │
 ├────────────────────────────────────────────────────────────┤
 │               MCP 集成（kilo.json 配置）                    │
 │  jadx-mcp  — AI 直接读 Java 源码反编译                      │
 │  ghidra-mcp — AI 直接反汇编/调试二进制                      │
 ├────────────────────────────────────────────────────────────┤
 │              合规检测能力                                    │
-│  注入检测 · 调试检测 · WebView SSL · APK 元数据             │
+│  注入检测 · 调试检测 · WebView SSL · APK 元数据/签名验证    │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -106,6 +97,7 @@
 - **反检测 Pipeline**：6 阶段自动递进（定位检测 SO → 抢 init_array → 追踪符号 → 保活 → 检测 shellcode → NOP 闪退函数）
 - **分层下钻**：`Java → JNI → Native → libc → syscall → SVC`，上层 hook 被绕过自动降级到更低层
 - **Dex2C/VMP 分析**：hook 优先拿数据 → unidbg 复现算法 → Ghidra 伪代码，不需要 IDA 重工具
+- **Native 深度逆向**：无符号函数/结构恢复（离线 ELF 侦察 + Ghidra 交叉引用推理）、Unicorn 单函数模拟执行（JNI/libc/syscall 打桩）、内存 DEX 脱壳（双 dumper 交叉验证，ptrace-free）
 
 ---
 
@@ -117,38 +109,45 @@ MobileRE-Skill/
 │   ├── agent/
 │   │   └── reverser.md              # Agent 角色定义（逆向分析研究员）
 │   └── skill/
-│       └── frida-mobile-security/
-│           ├── SKILL.md             # 总控：任务路由 + 决策树 + 模块目录
-│           ├── references/          # 9 大技巧域手册
-│           │   ├── unpacking.md         # 脱壳
-│           │   ├── anti-detection.md    # 环境对抗
-│           │   ├── crypto-hook.md       # 加密/功能 hook
-│           │   ├── behavior-analysis.md # 行为分析
-│           │   ├── static-analysis.md   # 静态攻击面
-│           │   ├── native-analysis.md   # SO 层分析
-│           │   ├── troubleshooting.md   # 故障诊断
-│           │   ├── api-reference.md     # Frida API 参考
-│           │   └── articles.md          # 参考文章索引
-│           ├── scripts/
-│           │   ├── core/utils.js        # 公共工具（始终首个加载）
-│           │   ├── monitors/            # 13 个监控模块（纯观察）
-│           │   ├── bypass/              # 9 个干预模块（反检测等）
-│           │   ├── utils/               # 脱壳/二进制/修复工具
-│           │   │   ├── unpack.py            # 一键脱壳入口
-│           │   │   ├── codeitem_dump.js     # 抽取壳回填 dump
-│           │   │   ├── dex_finder.js        # 内存扫描 DEX
-│           │   │   ├── dex_cache_dump.js    # ART 精确 dump
-│           │   │   ├── dex_rebuilder.py     # DEX 修复（checksum/回填）
-│           │   │   ├── scan_register_natives.js  # Dex2C 定位
-│           │   │   └── ...                  # find_strref 等分析工具
-│           │   ├── checklist/           # 合规检测项
-│           │   └── templates/           # 分析模板
-│           └── tools/                   # 独立检测工具（bat）
-│               ├── check-anti-inject.bat    # 注入检测
-│               ├── debug-gdb.bat            # 调试检测
-│               └── check-janus.bat          # APK 元数据
-├── feedback/FEEDBACK.md            # 分析过程反馈闭环
-├── kilo.json                       # MCP 配置（jadx-mcp / ghidra-mcp）
+│       ├── frida-mobile-security/   # 动态分析总控（Frida + jadx/ghidra MCP）
+│       │   ├── SKILL.md             # 总控：任务路由 + 决策树 + 模块目录
+│       │   ├── references/          # 9 大技巧域手册
+│       │   │   ├── unpacking.md         # 脱壳
+│       │   │   ├── anti-detection.md    # 环境对抗
+│       │   │   ├── crypto-hook.md       # 加密/功能 hook
+│       │   │   ├── behavior-analysis.md # 行为分析
+│       │   │   ├── static-analysis.md   # 静态攻击面
+│       │   │   ├── native-analysis.md   # SO 层分析
+│       │   │   ├── troubleshooting.md   # 故障诊断
+│       │   │   ├── api-reference.md     # Frida API 参考
+│       │   │   └── articles.md          # 参考文章索引
+│       │   ├── scripts/
+│       │   │   ├── core/utils.js        # 公共工具（始终首个加载）
+│       │   │   ├── monitors/            # 14 个监控模块（纯观察）
+│       │   │   ├── bypass/              # 9 个干预模块（反检测等）
+│       │   │   ├── utils/               # 脱壳/ELF/二进制/修复工具
+│       │   │   │   ├── unpack.py            # 一键脱壳入口
+│       │   │   │   ├── elfinfo.py           # ELF 侦察（段/依赖/导出入/重定位/vaddr↔offset）
+│       │   │   │   ├── fix_axml.py          # 爱加密魔改 AXML 修复
+│       │   │   │   ├── scan_register_natives.js  # Dex2C 定位
+│       │   │   │   └── ...                  # find_strref / dex_* 等
+│       │   │   ├── checklist/           # 合规检测项
+│       │   │   └── templates/           # 分析模板
+│       │   └── tools/                   # 独立检测工具（无需 Frida）
+│       │       ├── check-anti-inject.bat    # 注入检测
+│       │       ├── debug-gdb.py             # 调试检测（ptrace/TracerPid）
+│       │       ├── janus_check.py           # Janus/签名验证（备选路径）
+│       │       └── check-janus.bat          # APK 元数据（GetAPKInfo.jar）
+│       ├── rev-symbol/              # 无符号 .so 函数命名（Ghidra MCP）
+│       ├── rev-struct/              # 结构体恢复（偏移访问聚合）
+│       ├── rev-unicorn-debug/       # Unicorn 模拟调试（+ uniharness.py）
+│       ├── rev-dex-dumper/          # 运行时 DEX 脱壳（panda + mem，ptrace-free）
+│       └── karpathy-guidelines/     # 编码准则（开发辅助）
+├── tools/
+│   └── hap_parser.py               # HAP（鸿蒙）包信息解析
+├── requirements.txt                # Python 依赖（frida/unicorn/capstone/…）
+├── feedback/FEEDBACK.md            # 分析反馈闭环（本地保留，不入库）
+├── kilo.json                       # MCP 配置（jadx-mcp / ghidra-mcp，本地保留，不入库）
 ├── AGENTS.md                       # 开发规范（AI 编码约束）
 └── README.md / README.en.md        # 本文件
 ```
@@ -168,6 +167,20 @@ MobileRE-Skill/
 | Java Runtime | APK 信息提取 | https://www.oracle.com/java/technologies/downloads/ |
 | JADX | Java 反编译 | https://github.com/skylot/jadx |
 | Ghidra | 二进制分析 | https://ghidra-sre.org/ |
+
+### Python 依赖
+
+```bash
+pip install -r requirements.txt
+```
+
+| 包 | 用途 |
+|----|------|
+| `frida` / `frida-tools` | Frida 动态插桩 |
+| `unicorn` | CPU 模拟执行（SO 离线分析 / 模拟调试） |
+| `capstone` | 反汇编（模拟追踪/指令级调试） |
+| `keystone-engine` | 汇编（模拟打桩） |
+| `pyelftools` | ELF 解析（`elfinfo.py` 等工具） |
 
 ### MCP 配套（让 AI 直接读源码/反汇编）
 

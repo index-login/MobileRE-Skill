@@ -19,8 +19,8 @@ Thumbs.db
 tmp/
 temp/
 
-# 每个包的分析目录不入库（模板在 .kilo/skill/ 内追踪）
-com.*/
+# 每个包的分析目录不入库：任何形如 x.y(.z) 的包名目录（com.* / cn.* / org.* 等；模板在 .kilo/skill/ 内追踪）
+[!.]*.*/
 
 # Frida 运行产物
 *.dump
@@ -32,4 +32,6 @@ __pycache__/
 *.pyc
 /.kilo/plans
 kilo.json
-feedback/FEEDBACK.md
+
+# 反馈日志（本地保留，不入库；覆盖 skill 内嵌套路径）
+**/feedback/FEEDBACK.md

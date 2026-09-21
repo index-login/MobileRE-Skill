@@ -12,7 +12,7 @@ steps: 300
 - **攻击面枚举**：从 AndroidManifest 出发，列出所有 exported 组件、intent-filter、Content Provider、FileProvider、WebView 入口，输出攻击面清单
 - **静态逆向**：JADX 读 Java/Kotlin 源码，按攻击面逐类排查，追踪 source → sink 数据流
 - **动态分析**：Frida hook Java/Native 层，验证静态发现的可达性，确认 exploit
-- **自动化检测**：跑 `tools/` 下的 bat 脚本，自动输出结构化检测结果
+- **自动化检测**：跑 skill 内置检测脚本（`frida-mobile-security/tools/`），自动输出结构化检测结果
 - **报告输出**：每个 App 生成 `<包名>/REPORT.md`，含漏洞链描述、PoC、OWASP MASVS 映射
 
 ## 工作流
@@ -30,7 +30,7 @@ steps: 300
 - **漏洞链思维。** 单点漏洞不可怕，链才是真正的威胁。从入口到最终危害，追踪完整攻击链：Intent Redirection → Content Provider 访问 → FileProvider 路径遍历 → 文件窃取。报告中必须描述完整链路，而非孤立漏洞。
 - **污点追踪。** 每条发现标注：source（外部输入：Intent extras、URI 参数、文件路径、网络请求）→ path（经过的代码路径）→ sink（危险操作：`startActivity`、`loadUrl`、`File.write`、`rawQuery`、`exec`）。
 - **静态找可能，动态验证实。** JADX 找代码路径（广度），Frida 验证运行时可达性（精度）。两者互补，不可偏废。
-- **工具优先，不自己造。** 遇到问题先查 `tools/` 和 `scripts/` 有没有现成的。
+- **工具优先，不自己造。** 遇到问题先查 skill 内的 `scripts/`、`tools/` 有没有现成的（工具发现见「指向」）。
 - **每条结论标注代码位置。** 用表格汇总全链路审查结果，末尾附截图建议表。
 - **PoC 必须可复现。** 每条漏洞给出可执行的命令（如 `adb shell am start`）。
 - **报告持久化。** 每个 App 写入 `<包名>/REPORT.md`。
@@ -52,10 +52,9 @@ steps: 300
 | uv | 0.9.7 |
 | adb | `adb` |
 | jadx MCP | uv 托管，插件端口 8650 |
-| jadx CLI | 按环境配置：`JADX_JAR` 环境变量或 `where jadx` 定位；无则用 jadx MCP（见 unpacking.md 提示词） |
 | ghidra MCP | Python bridge，支持反编译+调试 |
-| 设备 ID | FA7A61A11178，arm64-v8a，USB 直连（`-U`） |
-| frida-server | 用户自行管理，命名为 `fuckserver`，Agent 不负责推送/重启，注意转发端口要要用-H |
+| 设备 ID | 以 `adb devices` 实际序列号为准（arm64-v8a，USB 直连用 `-U`，多设备用 `-D <serial>`） |
+| frida-server | 用户自行管理，命名为 `fuckserver`，启动端口一般设置为8888，Agent 不负责推送/重启，注意转发端口要要用-H |
 
 ## 项目目录管理
 
@@ -99,13 +98,14 @@ steps: 300
 | 工具 | 检测目标 | 用法 | 前置条件 |
 |------|---------|------|---------|
 | `check-anti-inject.bat` | 防注入（ptrace + /proc/pid/mem） | `check-anti-inject.bat <包名>` | root + AndKittyInjector + libhello64.so |
-| `debug-gdb.bat` | 防调试（ptrace / TracerPid） | `debug-gdb.bat <包名>` | root + gdbserver64 + NDK |
+| `debug-gdb.py` | 防调试（ptrace / TracerPid） | `py -3 tools/debug-gdb.py <包名>` | root + gdbserver64 + NDK |
 | `check-janus.bat` | Janus漏洞检测 | `check-janus.bat <apk路径>` | Java Runtime |
 
 
 ## 指向
 
 - 决策路线 + 路由 + 模块目录：`SKILL.md`（加载 skill 后可用）
+- 工具发现：按 skill 列表 description 路由 → SKILL.md 内查「工具清单」/「配套工具」；跨 skill 组合按配套节执行，不维护全局清单
 - 技巧分域：`references/`（anti-detection / unpacking / crypto-hook / behavior-analysis / static-analysis / native-analysis / troubleshooting / api-reference / articles）
 - 编码规范：`AGENTS.md`
 - 反馈积压：`feedback/FEEDBACK.md`
