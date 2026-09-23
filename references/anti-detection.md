@@ -1,7 +1,7 @@
 # 反 Frida 检测 Pipeline（环境对抗）
 
 > 何时读：用户提到"绕过检测/过掉反调试/挂上就闪退/防注入/加固壳/SVC/TracerPid/GDB"时读取。
-> 由 SKILL.md 任务路由表指向，按需读取。绕过模块在 `scripts/bypass/`，监控模块在 `scripts/monitors/`。
+> 由 SKILL.md 任务路由表指向，按需读取。绕过模块在 `scripts/bypass/`，监控模块在 `scripts/monitors/`（命令里的 `scripts/...` 为技能相对：复制执行先 `cd .kilo/skill/frida-mobile-security` 或展开全路径 `.kilo/skill/frida-mobile-security/scripts/...`）。
 
 ---
 

@@ -17,7 +17,7 @@ pip install unicorn
 
 Unicorn is the CPU emulation engine (Python binding, Windows wheel available — no JDK or Android toolchain needed). It emulates instructions only: loading the .so, resolving relocations, and simulating libc/JNI/syscalls are done by the Python harness you write (see below).
 
-## Harness kit (scripts/uniharness.py)
+## Harness kit (tools/uniharness.py)
 
 Import it instead of rewriting boilerplate:
 
@@ -35,8 +35,18 @@ r = h.call(0x196C, args=[env, 0])           # run until ret; r.x0, r.insns
 
 Helpers: `map` / `map_raw` / `map_elf` / `alloc` / `setup_stack` / `setup_tls` / `stub` (accepts `code=` from `asm()`) / `hook` / `jni_env` / `call` / `run` / `fault`. Self-test: `python3 uniharness.py`.
 
-Recon before writing a harness (raw-map check / deps / exports / relocs): `frida-mobile-security/scripts/utils/elfinfo.py`.
+Recon before writing a harness (raw-map check / deps / exports / relocs): `tools/elfinfo.py`.
 Dependencies: see repo root `requirements.txt` (unicorn, capstone, keystone-engine, pyelftools).
+
+## CLI runner (tools/emu_run.py)
+
+One-shot emulation without writing a harness:
+
+```bash
+python3 tools/emu_run.py libfoo.so --sym Java_pkg_Cls_method --jni --args "env,0,'text'" --poke 0x1300c:1=1 --read 0x1000:32
+```
+
+Options: `--off 0x..` (address instead of symbol), `--imp` (extra import stubs), `--trace`, `--timeout`, `--raw`, `--setup hooks.py` (full `Harness` access).
 
 ---
 

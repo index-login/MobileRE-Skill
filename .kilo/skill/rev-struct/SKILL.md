@@ -13,7 +13,7 @@ Recover data structure definitions by analyzing memory access patterns in functi
 
 This skill operates on decompiled native code. In this agent the toolchain is **Ghidra MCP** (`ghidra_*` tools):
 
-1. Target .so not yet imported → `adb pull` it from the device, then `ghidra_import_file` (ARM64: `ARM:LE:64:default`, ARM32: `ARM:LE:32:v7`).
+1. Target .so not yet imported → `adb pull` it from the device, then `ghidra_import_file` (ELF auto-detects; explicit IDs: ARM64 `AARCH64:LE:64:v8A`, ARM32 `ARM:LE:32:v7`).
 2. Query the loaded instance through Ghidra MCP: decompile functions by address/name, get callers/callees, inspect data types.
 3. Exact tool names depend on the loaded tool groups — list or search them with `ghidra_list_tool_groups` / `ghidra_search_tools` when unsure.
 
@@ -59,7 +59,7 @@ offset=0x08, size=4, access=read, type=DWORD
 
 ### Step 3: Traverse Callers for Analysis
 
-Decompile each caller and analyze:
+Decompile each caller (start from direct callers; expand one hop at a time and stop once the offset pattern stops changing) and analyze:
 
 1. **Parameter passing**: What is passed when calling?
    ```c
@@ -80,7 +80,7 @@ Decompile each caller and analyze:
 
 ### Step 4: Traverse Callees for Analysis
 
-Decompile each callee and analyze:
+Decompile each callee (direct callees first, same one-hop-at-a-time rule) and analyze:
 
 1. **How parameters are used**:
    ```c

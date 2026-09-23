@@ -1,7 +1,7 @@
 # 加密/功能 Hook（crypto-hook）
 
 > 何时读：用户提到"加密明文/算法/密钥/AES/找明文/加密前数据/hook 方法/修改参数/伪造返回值/SSL 证书/TrustManager/onReceivedSslError"时读取。
-> 由 SKILL.md 任务路由表指向，按需读取。相关模块在 `scripts/monitors/`。
+> 由 SKILL.md 任务路由表指向，按需读取。相关模块在 `scripts/monitors/`（命令里的 `scripts/...` 为技能相对：复制执行先 `cd .kilo/skill/frida-mobile-security` 或展开全路径 `.kilo/skill/frida-mobile-security/scripts/...`）。
 
 ---
 
@@ -48,7 +48,7 @@ Step 2-Native: native_hooker
 
 ```
 Step 1: 加载模块
-  frida -U -f com.app -l utils.js -l memory_scanner.js
+  frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/memory_scanner.js
   → 3 秒后自动扫描一次，输出所有匹配
 
 Step 2: 交互式搜索（Frida console 中执行）

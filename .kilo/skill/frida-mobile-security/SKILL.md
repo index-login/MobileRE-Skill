@@ -1,11 +1,13 @@
 ---
 name: frida-mobile-security
-description: 用于 Android/iOS 移动应用安全逆向分析：Frida 动态插桩、绕过反调试/反注入/加固壳、脱壳、加密与 native SO 层 hook、运行时行为分析、jadx-mcp 静态攻击面分析。内置工具链：一键脱壳 unpack.py、ELF 侦察 elfinfo.py、监控/绕过模块、独立检测工具（注入/调试/签名）。用户提到"绕过检测/闪退/脱壳/加密/抓包/行为摸底/内存扫描/分析 so/ELF 侦察/检查证书"等意图时使用。
+description: 用于 Android/iOS 移动应用安全逆向分析：Frida 动态插桩、绕过反调试/反注入/加固壳、脱壳、加密与 native SO 层 hook、运行时行为分析、jadx-mcp 静态攻击面分析。内置工具链：一键脱壳 unpack.py、ELF 侦察 elfinfo.py、非交互 Frida 运行 frida_run.py、快速反汇编 disasm.py、监控/绕过模块、独立检测工具（注入/调试/签名）。用户提到"绕过检测/闪退/脱壳/加密/抓包/行为摸底/内存扫描/分析 so/ELF 侦察/快速反汇编/检查证书"等意图时使用。
 ---
 
 # Frida Mobile Security — 逆向分析总控
 
-**模块优先，决策树驱动。** 本文件是总控：任务路由 + 决策树导航 + 模块目录。各技巧域的详细打法在 `references/` 分域文件，按需读取。
+**模块优先，决策树驱动。** 本文件是总控：任务路由 + 决策树导航 + 模块目录。各技巧域的详细打法在项目根 `references/` 分域文件（全量索引 `references/_index.md`），按需读取。
+
+> 路径基准：`references/*` 相对项目根；`scripts/*` 相对本文件所在目录（`.kilo/skill/frida-mobile-security/`）。**给用户的 frida CLI 命令必须写全路径**（如 `-l .kilo/skill/frida-mobile-security/scripts/core/utils.js`），或让用户先 `cd .kilo/skill/frida-mobile-security`；`tools/frida_run.py -l scripts/...` 短路径自动解析（实测：短路径直接跑 frida CLI 会 `Errno 2`）。
 
 **硬性规则：`scripts/core/utils.js` 必须作为第一个 `-l` 参数加载。**
 
@@ -14,6 +16,9 @@ description: 用于 Android/iOS 移动应用安全逆向分析：Frida 动态插
 ## 快速命令卡片
 
 ```bash
+# 从项目根执行：先 cd .kilo/skill/frida-mobile-security，或把 scripts/ 展开为 .kilo/skill/frida-mobile-security/scripts/
+# 例：frida -U -f com.app -l .kilo/skill/frida-mobile-security/scripts/core/utils.js -l .kilo/skill/frida-mobile-security/scripts/monitors/crypto_monitor.js
+
 # 加解密自吐
 frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/crypto_monitor.js
 
@@ -36,7 +41,27 @@ frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/intent_tracker.
 frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/memory_scanner.js
 ```
 
+> 通道说明：`-U` 是 USB 直连；走端口转发时换成 `-H 127.0.0.1:8888`（先 `adb forward tcp:8888 tcp:8888`）。
+> Agent 无人值守运行用 `tools/frida_run.py`（非交互：加载 → 观察 N 秒 → 存活报告 → detach）；也可直接用原生 `frida -F -q -t N -o log`（静默、定时退出、落盘）。frida CLI 是 REPL，stdin EOF 会自动退出，不能直接在后台跑。Windows 控制台打印非 UTF-8 payload 会崩输出线程：优先 `-o` 落盘或设 `PYTHONIOENCODING=utf-8`。
+> 设备操控用 `tools/device_ui.py`：元素树 `elements`、按文本/ID 点击 `tap --text/--id`（现 dump 现定位，无 ref 失效问题）、等待 `wait-for`、常亮 `stayon`、清空 `clear`。
+
 运行时配置通过 `-e 'var CONFIG_OVERRIDE={...}'` 注入，见 §五。
+
+---
+
+## 〇、环境自检（连设备后先跑，三条）
+
+```bash
+adb devices -l                                               # 1. 设备在线
+adb shell su -c "ps -A | grep -i frida"                      # 2. server 是否在跑
+adb forward tcp:8888 tcp:8888; frida-ps -H 127.0.0.1:8888    # 3. 通道验证（有进程列表即通）
+```
+
+启动 frida-server 用 `nohup ... &`（`-D` 会挂住 adb shell 不返回，容易误判未启动）。server 版本需与本地 `frida` CLI 一致：
+
+```bash
+adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev/null 2>&1 &'"
+```
 
 ---
 
@@ -47,7 +72,7 @@ frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/memory_scanner.
 | 意图关键词 | 手法域名 | 加载 |
 |-----------|---------|------|
 | "绕过检测" "过掉反调试" "挂上就闪退" "防注入" "加固壳" "SVC" "TracerPid" "GDB" | 环境对抗 | `references/anti-detection.md` |
-| "脱壳" "加固解密" "提取 dex" "so 提取" | 脱壳 | `references/unpacking.md`（**默认 `scripts/utils/unpack.py` 一键跑；深挖/异常才用底层脚本**） |
+| "脱壳" "加固解密" "提取 dex" "so 提取" | 脱壳 | `references/unpacking.md`（**默认 `tools/unpack.py` 一键跑；深挖/异常才用底层脚本**） |
 | "加密明文" "算法" "密钥" "AES" "hook 方法" "修改参数" "伪造返回值" "SSL 证书" "TrustManager" "onReceivedSslError" | 加密/功能 hook | `references/crypto-hook.md` |
 | "看网络请求" "抓包" "还原协议" "行为摸底" "全程监控" "污点追踪" "内存扫描" "Intent" "Serializable" | 行为分析 | `references/behavior-analysis.md` |
 | "分析这个类" "攻击面" "序列化" "WebView" "深链" "Provider" "反序列化" | 静态分析 | `references/static-analysis.md` |
@@ -102,6 +127,7 @@ frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/memory_scanner.
 | `crypto_monitor.js` | Java 层加解密自吐（算法/密钥/IV/明文） | crypto-hook |
 | `native_crypto_monitor.js` | OpenSSL/BoringSSL 加密监控 | crypto-hook |
 | `native_hooker.js` | 任意 native 函数 hook（加密/发送/校验） | native-analysis |
+| `jni_bridge_monitor.js` | 方法索引桥加固分析（梆梆/360 VMP/Dex2C 特征） | native-analysis |
 | `ssl_plaintext.js` | OkHttp/Retrofit HTTP 明文 | crypto-hook |
 | `memory_scanner.js` | 内存敏感数据扫描 + 密码输入监听 | crypto-hook |
 | `file_monitor.js` | 文件读写监控 | behavior-analysis |
@@ -127,16 +153,24 @@ frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/memory_scanner.
 | `so_loader_tracer.js` | 记录 do_dlopen 路径+基址 | anti-detection |
 | `root_bypass.js` | Root 检测绕过（File.exists/系统属性） | anti-detection |
 
-### utils/（SO/DEX 静态工具）
+### utils/（Frida 内存工具，JS）
 
 | 工具 | 用途 | 归属 |
 |------|------|------|
-| `unpack.py` | **脱壳一键入口**（线性流水线：回填+补充+自动pull+fix-checksum+去重+方法体标记） | unpacking |
 | `so_dump.js` | 内存 dump SO（脱壳提取） | unpacking |
 | `dex_cache_dump.js` | DexCache 精确 dump（免疫假 DEX/抹 magic） | unpacking |
 | `dex_finder.js` | 内存搜索 + 指纹校验 + 去重（**备选**：frida-dexdump 不可用时直接用） | unpacking |
 | `dex_defineclass_dump.js` | DefineClass 被动拦截 dump | unpacking |
 | `codeitem_dump.js` | 二代壳提取：主动 loadClass 触发回填 + 整 DEX dump | unpacking |
+| `scan_register_natives.js` | 定位 native 方法实现（Dex2C 按需分析） | native-analysis |
+
+### tools/（项目根：独立工具，无 Frida 依赖）
+
+按 `python3 tools/<工具> ...` 直接跑（工作目录 = 项目根）。检测项（注入/调试/Janus）见 §六。
+
+| 工具 | 用途 | 归属 |
+|------|------|------|
+| `unpack.py` | **脱壳一键入口**（线性流水线：回填+补充+自动pull+fix-checksum+去重+方法体标记） | unpacking |
 | `dex_rebuilder.py` | ① `--fix-checksum` 重算 checksum（默认操作）② CodeItem 离线重组回填 | unpacking |
 | `dex_dedupe.py` | 产物去重/校验 | unpacking |
 | `find_strref.py` | 字符串引用定位 | native-analysis |
@@ -146,7 +180,11 @@ frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/memory_scanner.
 | `fix_axml.py` | 修复爱加密魔改 AXML（Manifest 多 4 字节填充+headerSize 谎报 0x000C，jadx/apktool 无法解析时用） | static-analysis |
 | `patch_gadget_threadnames.py` | patch gadget 线程名 | native-analysis |
 | `scan_inline_svc.py` | 扫描内联 SVC 指令 | native-analysis |
-| `scan_register_natives.js` | 定位 native 方法实现（Dex2C 按需分析） | native-analysis |
+| `frida_run.py` | **非交互 Frida 运行器**（spawn/attach → 加载 → 观察 N 秒 → 存活报告 → detach；`-l` 支持 skill 内相对路径） | native-analysis |
+| `device_ui.py` | 设备交互（text/tap/swipe/key/shot/logs/launch/clear/foreground/size） | behavior-analysis |
+| `disasm.py` | 快速反汇编（capstone，按 symbol/vaddr；Ghidra 未启动时的 fallback） | native-analysis |
+| `jni_sig.py` | JNI 导出签名侦察（JNI 调用点清单 + Java 第 1 参类型推断：jstring/jbyteArray/…，hook native 前置） | native-analysis |
+| `emu_run.py` / `uniharness.py` | 离线仿真（rev-unicorn-debug）：单函数模拟 / JNI·libc 打桩基座 | native-analysis |
 
 ### templates/ + checklist/
 
@@ -195,7 +233,7 @@ var CONFIG_OVERRIDE = {
 
 ## 六、独立检测工具（前置，无需 Frida）
 
-`tools/` 下 bat 脚本，Agent 不能代跑，输出命令让用户自行执行（方便截图取证）。Python 工具可直接跑（`python3 tools/janus_check.py ...`、`python tools/debug-gdb.py ...`，注意本机 `python` 可能是 Python 2，用 `py -3`）。
+项目根 `tools/` 下 bat 脚本，Agent 不能代跑，输出命令让用户自行执行（方便截图取证）。Python 工具可直接跑（`python3 tools/janus_check.py ...`、`py -3 tools/debug-gdb.py ...`，本机 `python` 可能是 Python 2）。
 
 | 工具 | 检测目标 | 用法 |
 |------|---------|------|
@@ -207,6 +245,8 @@ var CONFIG_OVERRIDE = {
 首次分析新 App：check-janus → debug-gdb → check-anti-inject → Frida Phase 1。所有工具前置条件：root + SELinux Permissive。注意 `debug-gdb.py` 附加成功后目标若被反调试杀死，属于**检测到反调试**（正结论），非工具失败。
 
 **GetAPKInfo.jar 解析失败（爱加密等魔改 Manifest，报 `0x000c0003`）时，直接用 `janus_check.py`**——经 apksigner 验证签名方案（V1+V2 通过 = Janus 安全），效果与 GetAPKInfo.jar 一致。
+
+**冒烟自检（可选，验证整套链路）**：L2/L3 回归与离线复算的预期结果见 `references/smoke-test.md`。
 
 ---
 
@@ -223,7 +263,7 @@ var CONFIG_OVERRIDE = {
 
 ---
 
-## references 指引
+## references 指引（全量索引：`references/_index.md`）
 
 | 场景 | 读取 |
 |------|------|

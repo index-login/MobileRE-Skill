@@ -6,7 +6,7 @@
  *   2. Hook SslErrorHandler.proceed() → 看 App 是否调用了 proceed（忽略证书错误）
  *   3. 同时覆盖系统 WebView 和腾讯 X5 WebView
  * 
- * 用法：frida -H 127.0.0.1:7890 -f com.tdx.AndroidNewXZGJ.test -l webview_ssl_check.js
+ * 用法：frida -H 127.0.0.1:8888 -f com.tdx.AndroidNewXZGJ.test -l webview_ssl_check.js
  */
 Java.perform(function () {
     console.log("[*] WebView SSL Check Starting...\n");

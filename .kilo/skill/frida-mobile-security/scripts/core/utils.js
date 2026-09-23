@@ -267,6 +267,29 @@
         return null;
     };
 
+    /**
+     * 等待模块加载后回调。spawn 早期目标 so 尚未 dlopen，
+     * 直接 findExportByName 会静默返回 null。
+     * 用法: Utils.waitForModule("libfoo.so", function (mod) { hook(mod); }, 10000);
+     */
+    Utils.waitForModule = function (name, callback, timeoutMs) {
+        timeoutMs = timeoutMs || 10000;
+        var waited = 0;
+        var iv = setInterval(function () {
+            var m = Process.findModuleByName(name);
+            if (m) {
+                clearInterval(iv);
+                callback(m);
+                return;
+            }
+            waited += 100;
+            if (waited >= timeoutMs) {
+                clearInterval(iv);
+                Utils.fail("waitForModule timeout: " + name);
+            }
+        }, 100);
+    };
+
     // --------------- 时间工具 ---------------
     Utils.timestamp = function () {
         var d = new Date();

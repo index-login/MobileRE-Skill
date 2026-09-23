@@ -14,7 +14,7 @@
  *   按返回值类型区分，最后一个参数是方法索引。真实实现在 so 里按索引分发。
  *
  * 加载：
- *   frida -H 127.0.0.1:7890 -f com.app -l scripts/core/utils.js -l scripts/monitors/jni_bridge_monitor.js
+ *   frida -H 127.0.0.1:8888 -f com.app -l scripts/core/utils.js -l scripts/monitors/jni_bridge_monitor.js
  *
  * 场景：
  *   - 静态 jadx 看到 JniLib.cX(..., 索引) 加固痕迹时，动态确认哪些方法被加固

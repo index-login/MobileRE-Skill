@@ -1,7 +1,7 @@
 # 脱壳（Unpacking）
 
 > 何时读：用户提到"脱壳/加固解密/提取 dex/so 提取/FART/frida-dexdump/指令抽取"时读取。
-> 由 SKILL.md 任务路由表指向，按需读取。相关工具在 `scripts/utils/`。
+> 由 SKILL.md 任务路由表指向，按需读取。Python 工具在项目根 `tools/`；Frida JS 模块（`codeitem_dump` / `dex_finder` / `dex_cache_dump` / `dex_defineclass_dump` / `scan_register_natives`）在 skill `scripts/utils/`（root 内存 dump 见 skill `rev-dex-dumper/`）。
 
 ---
 
@@ -10,7 +10,7 @@
 **大多数场景直接跑 `unpack.py`，一条命令，线性自动完成，无需 AI 决策：**
 
 ```bash
-python3 scripts/utils/unpack.py <包名> [--out 输出目录] [--wait 120]
+python3 tools/unpack.py <包名> [--out 输出目录] [--wait 120]
 ```
 
 内部自动执行（默认全量回填，无判断环节）：
@@ -50,9 +50,9 @@ java -cp "<JADX_JAR路径>" jadx.cli.JadxCLI -d ./sources <dump目录>/classes.d
 DEX 已 fix-checksum（unpack.py 内置），无需 `-Pdex-input.verify-checksum=no`；若手动 dump 未修复需加该参数。转换后 `read <sources>/com/xxx/Class.java` 查看源码。
 
 **何时需要动底层脚本**（unpack.py 之外）：
-- 产物 `[Dex2C]` 标记 → `scan_register_natives.js` 定位 + native-analysis.md 分析
-- jadx 打不开/类缺失 → `dex_cache_dump.js` 精确 dump（抹 magic/假 DEX 场景）
-- 延迟加载 DEX 未捕获 → `dex_defineclass_dump.js` 被动拦截
+- 产物 `[Dex2C]` 标记 → `scripts/utils/scan_register_natives.js` 定位 + native-analysis.md 分析
+- jadx 打不开/类缺失 → `scripts/utils/dex_cache_dump.js` 精确 dump（抹 magic/假 DEX 场景）
+- 延迟加载 DEX 未捕获 → `scripts/utils/dex_defineclass_dump.js` 被动拦截
 - 高级抽取壳（方法执行粒度）→ codeitem_dump 调小 batchSize / 增大 batchDelay
 
 ---
@@ -85,8 +85,8 @@ DEX 已 fix-checksum（unpack.py 内置），无需 `-Pdex-input.verify-checksum
 jadx 打开 dump 产物（先 fix-checksum）：
 ├─ 能反编译 + 显示业务类 → 成功
 ├─ 类齐全 + 方法体空 → 抽取壳未回填，检查 loadClass 是否触发 / 是否方法执行粒度壳
-├─ 类缺失 / 全是系统类 → 假 DEX 干扰，转 dex_cache_dump.js
-└─ native 方法占比高 → Dex2C，转 scan_register_natives.js 按需分析
+├─ 类缺失 / 全是系统类 → 假 DEX 干扰，转 scripts/utils/dex_cache_dump.js
+└─ native 方法占比高 → Dex2C，转 scripts/utils/scan_register_natives.js 按需分析
 ```
 
 ---
@@ -98,7 +98,7 @@ jadx 打开 dump 产物（先 fix-checksum）：
 - **目录解析必须延迟**：spawn 早期 `Java.perform` 异步，`currentApplication()` 为 null，`getDumpDir()` 失败——需在 setTimeout 回调或惰性重试
 - **判断"能否用"必须真跑 jadx**：REPORT.md 等旧记录只作参考，不代表现行结论（曾误判 7 个 DEX"可用"实为 checksum 未验证）
 - **方法体判定**：return-void(0x0E) 占比高 → 抽取未回填；native 方法占比高 → Dex2C
-- **deepSearch 谨慎**：`dex_finder.js` 的 deep 会对未映射内存误命中产生大量假地址噪音，unpack.py 默认关闭
+- **deepSearch 谨慎**：`scripts/utils/dex_finder.js` 的 deep 会对未映射内存误命中产生大量假地址噪音，unpack.py 默认关闭
 
 ---
 

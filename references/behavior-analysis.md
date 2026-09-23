@@ -129,6 +129,14 @@ Step 2: 组合攻击链验证
 
 ---
 
+## 五、设备交互（`tools/device_ui.py`）
+
+常用动作：`text`（空格自动转 `%s`；`--replace` 先清空）、`clear`、`tap --text/--id`、`wait-for`、`launch`、`shot`、`logs`、`stayon`/`wake`。
+
+**元素树异常时退化为坐标操作**：个别场景 `tools/device_ui.py elements` 只 dump 到系统 App（App 已在前台、`dumpsys window` 焦点正常），`tap --text/--id` 全部 "no element matched"。兜底：`adb shell input tap X Y` + `adb shell input text ...`，坐标从一次成功截图量取（先 `shot` 再量）。
+
+---
+
 ## 常用组合
 
 | 分析目标 | 模块组合 |

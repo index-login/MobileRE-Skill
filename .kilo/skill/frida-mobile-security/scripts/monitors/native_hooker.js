@@ -15,6 +15,8 @@
         return;
     }
 
+    console.log('[*] pre-flight: 目标疑似加固/自校验时，先做"不 hook 对照"实验；崩了即停手 → references/troubleshooting.md');
+
     var CONFIG = U.mergeConfig('native_hooker', {
         targetLibs: [],
         hookPatterns: [

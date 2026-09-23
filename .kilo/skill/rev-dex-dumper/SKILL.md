@@ -1,6 +1,6 @@
 ---
 name: rev-dex-dumper
-description: Dump DEX files from a running Android app for unpacking/deobfuscation. Bundled tools: panda-dex-dumper and in-house mem-dex-dumper (both ptrace-free; cross-check each other). Activate when the user wants to unpack an Android APK, dump DEX from memory, extract decrypted DEX files, or defeat class-loading packing.
+description: Root memory dump of DEX from a running Android app: no injection, no ptrace (survives ptrace-blocking anti-debug; invisible to Frida checks), twin tools cross-check each other. Activate to unpack an APK, extract decrypted DEX, or defeat class-loading packing; for extraction shells or Frida-based dumping see frida-mobile-security.
 ---
 
 # rev-dex-dumper - Android DEX Dumper

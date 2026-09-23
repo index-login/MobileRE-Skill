@@ -1,7 +1,7 @@
 # 故障诊断（Troubleshooting）
 
 > 何时读：用户提到"模块无输出/闪退/ANR/hook 不生效/报错/环境异常"时读取。
-> 由 SKILL.md 任务路由表指向，按需读取。如以下排查表无法解决，搜索最新实践：`https://weixin.sogou.com/weixin?type=2&query=frida+<关键词>`
+> 由 SKILL.md 任务路由表指向，按需读取。模块位置见 SKILL.md 模块目录（Frida 模块 `scripts/<子目录>/` 相对 skill 根；独立工具在项目根 `tools/`）。如以下排查表无法解决，搜索最新实践：`https://weixin.sogou.com/weixin?type=2&query=frida+<关键词>`
 
 ---
 
@@ -32,6 +32,8 @@
 | Interceptor.replace 崩溃 | 参数签名不匹配 | 检查 NativeFunction 参数类型 |
 | TypeError: not a function | replace/attach 冲突 | exit_blocker(blockSyscall:false) 或 indirectHook |
 | 进程退出但无 BLOCKED | SVC #0 内联 exit_group | anti-detection.md 分支 B |
+| 主进程存活但 logcat 有子进程 SIGSEGV | 反调试 fork 子进程自杀（ptrace 自检等） | 别判「Frida 导致闪退」：`ps` 确认主 PID 存活，再看子进程崩溃栈 |
+| 函数中部 inline hook 后 SIGABRT（stack corruption） | Frida trampoline 干扰栈 canary / 完整性自检 | 优先 hook 函数入口；必须看中部时改用 Stalker 观察（不改指令） |
 
 ---
 
@@ -176,15 +178,49 @@
 
 ---
 
+## 仿真排查（Unicorn）
+
+### 仿真结果不确定 / 每次输出不同
+
+先查 `timeout` 单位：Unicorn 2.x 的 `emu_start(..., timeout=N)` 按**微秒**解释（文档写毫秒）；`timeout=300000`（以为 5 分钟）实为 0.3 秒，会把仿真硬截断在任意 PC，表现为"结果随机/提前 return"，容易误判为"目标代码非确定性"。`timeout=0` = 不限。
+
+```bash
+# 玩具验证：死循环 + timeout=50000，若 ~50ms 返回则为微秒语义
+python3 -c "import time;from unicorn import Uc,UC_ARCH_ARM64,UC_MODE_LITTLE_ENDIAN;\
+uc=Uc(UC_ARCH_ARM64,UC_MODE_LITTLE_ENDIAN);uc.mem_map(0x1000,0x1000);uc.mem_write(0x1000,bytes.fromhex('00000014'));\
+t=time.time();uc.emu_start(0x1000,0x1004,timeout=50000);print('elapsed',time.time()-t)"
+```
+
+`uniharness.call()/run()` 默认已是 `timeout=0`。
+
+---
+
 ## 环境版本
 
 | 现象 | 原因 | 排查 |
 |------|------|------|
-| frida -U 连不上 | frida-server 未启动或版本不匹配 | `adb shell "frida-server -D"` |
+| frida 连不上（-U / -H） | server 未启动 / 未 forward / 版本不匹配 | 见下「frida 通道自检」 |
 | Java.perform 报错 | 非 JVM 进程 | `frida-ps -U` 确认进程类型 |
 | ARM64 vs ARM32 符号不匹配 | 64位设备 32位 so | `file` 命令检查架构 |
 | iOS arm64e PAC 崩溃 | 指针认证 | 见 api-reference.md |
 | Android 高版本 linker64 符号消失 | linker 重构 | `Module.enumerateExports("linker64")` |
+
+### frida 通道自检（连不上时按序查）
+
+1. 设备在场：`adb devices -l`
+2. server 在跑：`adb shell su -c "ps -A | grep -i frida"`；没有则用 `nohup ... &` 启动（**`-D` 会挂住 adb shell 不返回**，容易误判未启动）：
+   ```bash
+   adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev/null 2>&1 &'"
+   ```
+3. 通道验证：`adb forward tcp:8888 tcp:8888; frida-ps -H 127.0.0.1:8888`（能列出进程即通）
+4. 版本对齐：本地 `frida --version` 必须与设备上 server 版本一致，否则报协议错误
+
+### Windows（PowerShell）环境坑
+
+- `python` 可能是 Python 2.7（如 drozer 自带），统一用 `py -3` / `python3`
+- 二进制重定向会被按文本重编码：`adb exec-out screencap -p > x.png` 必须 `cmd /c "..."` 包一层，否则 PNG 损坏
+- heredoc（`<<EOF`）不可用：多行脚本先落地成 .py 文件再执行
+- `adb pull` 不支持通配符：先 `adb shell pm path <pkg>` 取（带 hash 的）绝对路径再 pull
 
 ---
 

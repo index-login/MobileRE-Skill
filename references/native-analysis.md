@@ -1,7 +1,7 @@
 # SO 层分析（Native Analysis）
 
 > 何时读：用户提到"分析这个 so/native 函数/so 里的加密/字符串引用/交叉引用/逆向 so/找不到导出/STRIPPED"时读取。
-> 由 SKILL.md 任务路由表指向，按需读取。静态工具在 `scripts/utils/`，动态模块在 `scripts/monitors/`。
+> 由 SKILL.md 任务路由表指向，按需读取。静态工具（Python）在项目根 `tools/`，Frida 模块在 `scripts/monitors/` 和 `scripts/utils/`（命令里的 `scripts/...` 为技能相对：复制执行先 `cd .kilo/skill/frida-mobile-security` 或展开全路径 `.kilo/skill/frida-mobile-security/scripts/...`）。
 
 ---
 
@@ -58,7 +58,7 @@ Dex2C = Java 方法编译成 ARM 机器码进 .so，DEX 里只剩 native 声明�
 
 ```bash
 # native_hooker 直接抓参数/返回值/中间值
-frida -H 127.0.0.1:7890 -f com.app -l scripts/core/utils.js -l scripts/monitors/native_hooker.js \
+frida -H 127.0.0.1:8888 -f com.app -l scripts/core/utils.js -l scripts/monitors/native_hooker.js \
   -e 'var CONFIG_OVERRIDE={native_hooker:{targetLibs:["libTdxAndroidCore"],hookPatterns:["encrypt"]}};'
 ```
 
@@ -106,7 +106,7 @@ ghidra_import_file ./libTdxAndroidCore.so
 ```
 
 - 已集成 `ghidra_*` MCP 工具，命令行/对话驱动，无需手动开 GUI
-- 配合 `find_strref.py`（字符串引用）快速定位关键逻辑
+- 配合 `tools/find_strref.py`（字符串引用）快速定位关键逻辑
 
 ### 2.3 定位流程
 
@@ -141,7 +141,7 @@ frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/native_hooker.j
 
 - 监控 EVP 加解密函数，内置 fallback 链：`EVP_CIPHER_CTX_cipher || EVP_CIPHER_CTX_get0_cipher`
 - 无输出时扩展 CRYPTO_SOS 列表：Flutter app 加 `libflutter.so`，Cronet 加 `libcronet.so`
-- 用 `scan_inline_svc.py` 或内存常量扫描定位自研算法
+- 用 `tools/scan_inline_svc.py` 或内存常量扫描定位自研算法
 
 ### 2.3 dl_monitor（SO 生命周期）
 
@@ -168,6 +168,25 @@ Interceptor.attach(android_dlopen_ext, {
 });
 ```
 
+### 2.5 导入函数 hook（导入 ≠ 导出）
+
+目标 so 里调用的 `strncmp`/`memcmp` 等是**导入符号**，`Module.findExportByName("<目标so>", "strncmp")` 永远返回 null。正确姿势：hook libc 导出 + 按调用者过滤：
+
+```javascript
+var addr = Module.findExportByName("libc.so", "strncmp");
+Interceptor.attach(addr, {
+    onEnter: function (args) {
+        var caller = Process.findModuleByAddress(this.returnAddress);
+        if (!caller || caller.name.indexOf("libfoo.so") === -1) return;  // 不过滤会被系统属性查询刷屏数千行
+        console.log("[strncmp] '" + args[0].readUtf8String() + "' vs '" + args[1].readUtf8String() + "'");
+    }
+});
+```
+
+- 模块未加载时装不上 → `Utils.waitForModule("libfoo.so", cb)`（spawn 早期 so 尚未 dlopen，直接 find 会静默失败）
+- **注意竞态**：`waitForModule` 是轮询（~100ms），so 加载后**立即调用**的 init/构造函数会漏 hook；对这类目标用 `native_hooker.js`（dlopen 同步安装）或 `init_hook.js`（call_constructors 抢时机）
+- **先确认前置条件**：目标可能只在输入满足条件（长度/格式）时才走到比较函数。用 `tools/disasm.py <so> --symbol <JNI导出>` 看判断分支，或 hook JNI 入口打印参数/返回值
+
 ---
 
 ## 四、SO 静态分析（Ghidra MCP）
@@ -176,8 +195,8 @@ Ghidra MCP 支持反编译 + 调试（`ghidra_*` 工具），用于分析 so 的
 
 ### 3.1 工作流
 
-1. 从设备提取 so：`adb pull`（或 `so_dump.js` 动态 dump）
-2. 导入 Ghidra：`ghidra_import_file`（ARM64: `ARM:LE:64:default`）
+1. 从设备提取 so：`adb pull`（或 `scripts/utils/so_dump.js` 动态 dump）
+2. 导入 Ghidra：`ghidra_import_file`（ELF 自动识别；显式指定 ARM64 用 `AARCH64:LE:64:v8A`，ARM32 用 `ARM:LE:32:v7`）
 3. 反编译定位关键函数
 4. 结合动态 hook 验证（native_hooker + 调用栈）
 
@@ -185,11 +204,13 @@ Ghidra MCP 支持反编译 + 调试（`ghidra_*` 工具），用于分析 so 的
 
 | 工具 | 用途 |
 |------|------|
-| `scripts/utils/find_strref.py` | 定位字符串引用（在 so 中找字符串的交叉引用） |
-| `scripts/utils/find_branch_callers.py` | 定位函数调用者（交叉引用） |
-| `scripts/utils/scan_inline_svc.py` | 扫描内联 SVC 指令（检测代码特征） |
-| `scripts/utils/fix_elf.py` | 修复 ELF header（dump 后） |
-| `scripts/utils/patch_gadget_threadnames.py` | patch gadget 线程名 |
+| `tools/find_strref.py` | 定位字符串引用（在 so 中找字符串的交叉引用） |
+| `tools/find_branch_callers.py` | 定位函数调用者（交叉引用） |
+| `tools/disasm.py` | 快速反汇编（按 symbol/vaddr，capstone；Ghidra 未启动时的 fallback） |
+| `tools/jni_sig.py` | JNI 导出签名侦察（JNI 调用点清单 + Java 第 1 参类型推断：jstring/jbyteArray/…） |
+| `tools/scan_inline_svc.py` | 扫描内联 SVC 指令（检测代码特征） |
+| `tools/fix_elf.py` | 修复 ELF header（dump 后） |
+| `tools/patch_gadget_threadnames.py` | patch gadget 线程名 |
 
 ### 3.3 定位目标函数的方法（优先级从高到低）
 
@@ -229,6 +250,26 @@ Interceptor.attach(RegisterNatives, {
     }
 });
 ```
+
+### JNI 参数类型判读（hook 前置，避免崩在 agent）
+
+`Java_*` 导出的第 3 参（env、thiz 之后的第一个 Java 参数）可能是 `jstring`、`jbyteArray`、`jobject`……**按错类型读会把进程打崩在注入 agent 里**（tombstone pc 落在 `memfd:*`、`#00 GetStringUTFChars` 帧，极易误判为反调试）。
+
+1. **静态判型（首选）**：`python3 tools/jni_sig.py <so> --symbol <JNI导出>` —— 扫 `ldr xR,[xM,#imm]; blr xR` 解析 JNI API（arm64 offset = index×8），输出 `jbyteArray` / `jstring` / … 结论（L3 的 `bar`/`init` 实测判出 `jbyteArray`）
+2. **反汇编口径**：`ldr x8,[env]`（取 vtable）→ `ldr x8,[x8,#off]` → `blr x8`；常用 offset：`0x5c0=GetByteArrayElements`、`0x558=GetArrayLength`（jstring 系不在这些槽位，别按直觉猜）
+3. **Frida 读 byte[]**（偏移取自目标 so 自身反汇编，不凭猜）：
+
+```javascript
+function readJbyteArray(env, arr) {
+    var vt = env.readPointer();
+    var getLen = new NativeFunction(vt.add(0x558).readPointer(), 'int', ['pointer', 'pointer']);
+    var getElems = new NativeFunction(vt.add(0x5c0).readPointer(), 'pointer', ['pointer', 'pointer', 'pointer']);
+    var n = getLen(env, arr);
+    return new Uint8Array(getElems(env, arr, ptr(0)).readByteArray(n));
+}
+```
+
+完整实现见 `owasp.mstg.uncrackable3/hook_l3_dump.js` 的 `readJbyteArray`。
 
 ### NewStringUTF 字符串捕获
 
@@ -298,6 +339,7 @@ if (syscall) {
 | Native 加密 | `utils + native_hooker(targetLibs:["libencrypt","libssl","libcrypto"])` |
 | SO 加载追踪 | `utils + dl_monitor` |
 | 分层下钻 | `utils + native_hooker + syscall_tracer` |
-| 字符串引用定位 | `find_strref.py` + Ghidra |
-| 内联 SVC 扫描 | `scan_inline_svc.py` |
+| 导入函数（strncmp/memcmp 等） | hook libc 导出 + `Process.findModuleByAddress(this.returnAddress)` 过滤（见 2.5） |
+| 字符串引用定位 | `tools/find_strref.py` + Ghidra |
+| 内联 SVC 扫描 | `tools/scan_inline_svc.py` |
 | Dex2C 定位 native 实现 | `utils + scan_register_natives.js` → Ghidra 单函数逆向 |

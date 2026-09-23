@@ -28,36 +28,49 @@
 
 ## 模块结构
 
-Skill 采用「单 skill + references 分域 + 脚本共享」结构（符合 Agent Skills 开放标准）：
+采用「常驻层 + 加载层 + 知识层 + 工具层」四层结构，引用基准为**项目根**：
 
 ```
-.kilo/skill/frida-mobile-security/
-├── SKILL.md              ← 总控：任务路由 + 决策树导航 + 模块目录（精华区）
-├── references/           ← 技巧分域手册，按需读取（不注册为独立 skill）
-│   ├── anti-detection.md    环境对抗
-│   ├── unpacking.md         脱壳
-│   ├── crypto-hook.md       加密/功能 hook
-│   ├── behavior-analysis.md 行为分析
-│   ├── static-analysis.md   静态分析（jadx-mcp）
-│   ├── native-analysis.md   SO 层分析
-│   ├── troubleshooting.md   故障诊断
-│   ├── api-reference.md     Frida API 参考
-│   └── articles.md          参考文章索引
-├── scripts/              ← 脚本共享库（工具，不属于任何技巧域）
-│   ├── core/utils.js        ← 始终首个加载，提供公共工具
-│   ├── monitors/            ← 纯观测，不修改行为
-│   ├── bypass/              ← 主动干预，修改 app 行为
-│   ├── utils/               ← SO/DEX 静态工具（so_dump/dex_cache_dump/codeitem_dump 等）
-│   ├── checklist/           ← 检测清单脚本
-│   └── templates/           ← 模板，复制后修改使用
-└── tools/                 ← 独立 bat 检测工具
+MobileRE-Skill/                    ← 工作目录（项目根）
+├── references/                    ← 知识层：技巧手册 wiki（项目级共享）
+│   ├── _index.md                    ← 全量索引（作用 / 何时读 / 是否常驻）
+│   ├── anti-detection.md            环境对抗
+│   ├── unpacking.md                 脱壳
+│   ├── crypto-hook.md               加密/功能 hook
+│   ├── behavior-analysis.md         行为分析
+│   ├── static-analysis.md           静态分析（jadx-mcp）
+│   ├── native-analysis.md           SO 层分析
+│   ├── troubleshooting.md           故障诊断
+│   ├── api-reference.md             Frida API 参考
+│   └── articles.md                  参考文章索引
+├── tools/                         ← 工具层：独立工具（py/bat/jar，无 Frida 依赖）
+│   ├── elfinfo.py / disasm.py         ELF 侦察 / 反汇编
+│   ├── unpack.py / dex_*.py         脱壳与 DEX 处理
+│   ├── frida_run.py / device_ui.py   非交互 Frida 运行 / 设备交互
+│   ├── emu_run.py / uniharness.py   离线仿真（rev-unicorn-debug）
+│   └── check-*.bat / debug-gdb.py / janus_check.py   检测项（注入/调试/Janus）
+├── <包名>/                         ← 每个 App 的分析产物（不入库）
+├── feedback/FEEDBACK.md            ← 反馈积压（agent 级，本地保留不入库）
+└── .kilo/
+    ├── agent/reverser.md           ← 常驻层：工作纪律 + 重要手册清单
+    └── skill/frida-mobile-security/
+        ├── SKILL.md                ← 加载层：任务路由 + 决策树导航 + 模块目录（精华区）
+        └── scripts/                ← Frida JS 模块（由 frida `-l` 加载）
+            ├── core/utils.js         ← 始终首个加载，提供公共工具
+            ├── monitors/             ← 纯观测，不修改行为
+            ├── bypass/               ← 主动干预，修改 app 行为
+            ├── utils/                ← 内存 dump / 运行时 JS 工具
+            ├── checklist/            ← 检测清单脚本
+            └── templates/            ← 模板，复制后修改使用
 ```
 
 规则：
-- **脚本是工具，不属于任何技巧域**：references 按模块名引用 `scripts/`，不复制脚本
+- **工具即路径**：独立工具放项目根 `tools/`（py/bat/jar），Frida JS 模块留在 skill `scripts/`；两边都不加转发包装层
 - **信息只存一份**：知识只存在于 SKILL.md 或某个 references 之一，不重复
-- **新技巧域**：新增 references/<域>.md 并在 SKILL.md 路由表加一行
-- **新模块**：放入对应 `scripts/` 子目录，在 SKILL.md 模块目录加一行
+- **常驻层只放纪律与指针**：`.kilo/agent/reverser.md` 只写重要手册（作用 + 何时读）与停手规则，技巧知识只存 `references/`
+- **新手册**：`references/<域>.md` + `_index.md` 加一行；属重要手册（任务域入口 / 卡点自救）同时登记 `.kilo/agent/reverser.md`
+- **新工具**：独立工具放 `tools/`，Frida JS 模块放对应 `scripts/` 子目录，并在 SKILL.md 模块目录加一行
+- **路径基准**：命令按需写全（工作目录 = 项目根）；`references/*` 相对项目根，`scripts/*` 相对 skill 目录
 
 新模块导出标准接口：
 
@@ -95,7 +108,7 @@ if (typeof CONFIG_OVERRIDE !== 'undefined') {
 
 ## 反馈协议
 
-分析过程中遇到以下情况时，往 `feedback/FEEDBACK.md` **追加**一条（不改已有条目）：
+分析过程中遇到以下情况时，往 `feedback/FEEDBACK.md`（项目根，agent 级）**追加**一条（不改写他人条目；状态更新与归档见文件头协议）：
 
 - 决策树某个分支走不通或没覆盖
 - 模块崩溃 / 无输出 / 逻辑错
@@ -105,20 +118,37 @@ if (typeof CONFIG_OVERRIDE !== 'undefined') {
 字段约束：
 - 类型限 5 种：`decision-tree` / `module-bug` / `missing-module` / `doc` / `tool`
 - 复现**必须**给完整 `frida` 命令（开发时原样跑）
-- 状态默认 `open`，不自行关闭
+- 状态默认 `open`；谁修复谁闭环——附核对证据后改 `closed` 并移入归档，无证据不得关闭
 
 ## 不重复造轮子
 
 - 写新模块前先查 `scripts/` 是否已有可复用的
+- 写新手册前先查 `references/_index.md`，避免重复；知识与文档不重复两处
 - `utils.js` 已有日志格式化、hexdump、backtrace 解析，直接调用
 - 配置走 `CONFIG_OVERRIDE` 机制，不硬编码
 - 检测类脚本放 `checklist/`，监控类放 `monitors/`，绕过类放 `bypass/`
+- 新增可复用工具 → 放对应 `scripts/` 子目录（或 `tools/`），**路径即入口**；在 SKILL.md 模块目录登记
+- 修工具 bug 直接改脚本本身（不加转发包装层）
+
+## 工具登记（防遗忘）
+
+- 写一次性脚本前先查对应 skill 的 SKILL.md 模块目录（工具索引：在哪/叫什么/干什么）
+- 可复用的工具沉淀到项目根 `tools/`（独立工具）或 skill `scripts/`（Frida JS 模块），并在 SKILL.md 模块目录登记
+- 一次性产物留在 `<包名>/`，每个 App 以 `REPORT.md` 收口（新会话先读报告再动手）
+- 新增/删除工具后同步 SKILL.md 模块目录（唯一索引，不维护全局清单）
+- **skill 内容为会话开始快照**：编辑 SKILL.md / skill 文件后，同一会话内 `skill` 工具仍可能返回旧版；新会话生效。判断与执行一律以磁盘文件为准
+
+## 能力选择（工具预算）
+
+- MCP 工具列表每次请求常驻上下文（30+ 工具 ≈ 数 K tokens）；只保留"没有它就不行"的 MCP（本仓库：jadx / ghidra）
+- 有维护中的 MCP → 直接用，不重复造；没有 → 写成 `scripts/`/`tools/` 下的独立脚本（可移植 + 可脚本化 + 零常驻成本）
+- 设备交互用 `tools/device_ui.py`（元素树/按文本点击/等待/常亮）
 
 ## 集成新检测项
 
 把新的检测能力集成到 skill 时：
 
-1. 判断类型：Frida 脚本 → `scripts/`，Python 工具 → `tools/` 或 `templates/`，bat 脚本 → `tools/`
+1. 判断类型：Frida JS 模块 → `scripts/`，独立工具（py/bat/jar）→ 项目根 `tools/`，模板 → `templates/`
 2. 遵循上述模块规范（CONFIG、CONFIG_OVERRIDE）
 3. 沉渍到对应技巧域：更新 SKILL.md 路由表（如新技巧域则新建 references/<域>.md）
 4. 更新 SKILL.md 模块目录和常用组合速查表

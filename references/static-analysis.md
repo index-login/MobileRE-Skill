@@ -133,9 +133,9 @@ Google Auth Library `OAuth2Credentials`：`transportFactoryClassName` 字段可�
 ### Manifest 解析失败（jadx 乱码/二进制）
 
 - 症状：jadx 输出二进制 AXML（头 `03 00 0C 00`），apktool 报 `got: 0x000c0003` → 爱加密魔改（首 chunk 插 4 字节 + headerSize 谎报 0x000C）
-- 修复：`scripts/utils/fix_axml.py`（删 4 字节填充 + headerSize 回 8 + size 减 4）
+- 修复：`tools/fix_axml.py`（删 4 字节填充 + headerSize 回 8 + size 减 4）
   ```bash
-  python3 scripts/utils/fix_axml.py -i base.apk -o base_fixed.apk
+  python3 tools/fix_axml.py -i base.apk -o base_fixed.apk
   ```
 - 验证：jadx CLI `--no-src` 重解应为文本；备选 `aapt dump xmltree base.apk AndroidManifest.xml`
 
@@ -150,4 +150,4 @@ Google Auth Library `OAuth2Credentials`：`transportFactoryClassName` 字段可�
 | 可疑 Intent 传递 | `intent_tracker`（behavior-analysis.md） |
 | 加密调用点 | `crypto_monitor`（crypto-hook.md） |
 | 反序列化 sink | 触发 deeplink 后观察 file/network 日志 |
-| 免检 WebView | `checklist/webview_ssl_check.js` |
+| 免检 WebView | `scripts/checklist/webview_ssl_check.js` |

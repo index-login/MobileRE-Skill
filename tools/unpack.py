@@ -37,12 +37,14 @@ import time
 import frida
 
 # ==================== 配置 ====================
-DEFAULT_HOST = "127.0.0.1:7890"
-SKILL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-CORE = os.path.join(SKILL_DIR, "core", "utils.js")
-CODEITEM_DUMP = os.path.join(SKILL_DIR, "utils", "codeitem_dump.js")
-DEX_FINDER = os.path.join(SKILL_DIR, "utils", "dex_finder.js")
-DEDUPE = os.path.join(SKILL_DIR, "utils", "dex_dedupe.py")
+DEFAULT_HOST = "127.0.0.1:8888"
+TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+SKILL_SCRIPTS = os.path.normpath(os.path.join(
+    TOOLS_DIR, os.pardir, ".kilo", "skill", "frida-mobile-security", "scripts"))
+CORE = os.path.join(SKILL_SCRIPTS, "core", "utils.js")
+CODEITEM_DUMP = os.path.join(SKILL_SCRIPTS, "utils", "codeitem_dump.js")
+DEX_FINDER = os.path.join(SKILL_SCRIPTS, "utils", "dex_finder.js")
+DEDUPE = os.path.join(TOOLS_DIR, "dex_dedupe.py")
 CODEMARK = "FART] whole-dex dump done"
 FINDERMARK = "DEXFINDER] done"
 

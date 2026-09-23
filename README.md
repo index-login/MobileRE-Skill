@@ -46,8 +46,8 @@
 一个 **AI 逆向分析 Agent 的完整技能系统**，不是脚本合集：
 
 - 🧠 **Agent 大脑**（`.kilo/agent/reverser.md`）— 逆向分析角色定义，按决策树自动选模块
-- 📚 **领域知识**（`.kilo/skill/`）— 动态分析总控（9 大技巧域）+ Native 深度能力（符号/结构恢复、离线模拟执行、内存 DEX 脱壳）
-- 🔧 **能力单元**（`scripts/`）— 23 个 Frida 模块（monitors 14 + bypass 9）+ 16 个二进制/修复工具 + 检测清单
+- 📚 **领域知识**（`references/` 项目级 wiki + `.kilo/skill/`）— 9 大技巧域手册（全量索引 `_index.md`）+ 动态分析总控 + Native 深度能力（符号/结构恢复、离线模拟执行、内存 DEX 脱壳）
+- 🔧 **能力单元**（`scripts/`）— 23 个 Frida 模块（monitors 14 + bypass 9）+ 18 个二进制/修复/运行工具 + 检测清单
 - 🛠️ **合规检测** — 注入、调试、WebView SSL、APK 元数据/签名
 - 🔌 **MCP 集成**（`kilo.json`）— jadx-mcp（Java 反编译）+ ghidra-mcp（二进制分析）
 
@@ -71,16 +71,16 @@
 │                 AI Agent (Kilo)                             │
 │  .kilo/agent/reverser.md  — Agent 角色定义                  │
 │  .kilo/skill/.../SKILL.md — 任务路由 + 决策树 + 模块索引    │
-│  feedback/FEEDBACK.md     — 分析过程反馈闭环                │
+│  feedback/FEEDBACK.md     — agent 级反馈闭环（项目根）              │
 ├────────────────────────────────────────────────────────────┤
-│               Frida 动态 Hook 模块                          │
+│               Frida 动态 Hook 模块（skill scripts/）        │
 │  monitors/ (14 个) — 纯观察，不修改行为                     │
 │  bypass/   (9 个)  — 主动干预，修改 app 行为                │
-│  utils/            — 脱壳/反编译/符号分析工具               │
+│  utils/            — 内存 dump / 运行时 JS 工具             │
 ├────────────────────────────────────────────────────────────┤
-│               Python 二进制分析工具                          │
-│  elfinfo · find_branch_callers · find_strref · fix_elf     │
-│  fix_axml · scan_inline_svc · so_dump · hap_parser         │
+│               独立工具（项目根 tools/）                      │
+│  elfinfo · disasm · unpack · dex_* · frida_run · device_ui │
+│  emu_run · so_dump · fix_elf · fix_axml · hap_parser · 检测 │
 ├────────────────────────────────────────────────────────────┤
 │               MCP 集成（kilo.json 配置）                    │
 │  jadx-mcp  — AI 直接读 Java 源码反编译                      │
@@ -105,48 +105,49 @@
 
 ```
 MobileRE-Skill/
+├── references/                      # 技巧手册 wiki（项目级，索引见 _index.md）
+│   ├── _index.md                    # 索引：作用 / 何时读 / 是否常驻
+│   ├── unpacking.md                 # 脱壳
+│   ├── anti-detection.md            # 环境对抗
+│   ├── crypto-hook.md               # 加密/功能 hook
+│   ├── behavior-analysis.md         # 行为分析
+│   ├── static-analysis.md           # 静态攻击面
+│   ├── native-analysis.md           # SO 层分析
+│   ├── troubleshooting.md           # 故障诊断
+│   ├── api-reference.md             # Frida API 参考
+│   ├── articles.md                  # 参考文章索引
+│   └── smoke-test.md                # 冒烟自检（回归清单，其它资料）
 ├── .kilo/
 │   ├── agent/
-│   │   └── reverser.md              # Agent 角色定义（逆向分析研究员）
+│   │   └── reverser.md              # Agent 角色定义（工作纪律 + 重要手册清单）
 │   └── skill/
 │       ├── frida-mobile-security/   # 动态分析总控（Frida + jadx/ghidra MCP）
 │       │   ├── SKILL.md             # 总控：任务路由 + 决策树 + 模块目录
-│       │   ├── references/          # 9 大技巧域手册
-│       │   │   ├── unpacking.md         # 脱壳
-│       │   │   ├── anti-detection.md    # 环境对抗
-│       │   │   ├── crypto-hook.md       # 加密/功能 hook
-│       │   │   ├── behavior-analysis.md # 行为分析
-│       │   │   ├── static-analysis.md   # 静态攻击面
-│       │   │   ├── native-analysis.md   # SO 层分析
-│       │   │   ├── troubleshooting.md   # 故障诊断
-│       │   │   ├── api-reference.md     # Frida API 参考
-│       │   │   └── articles.md          # 参考文章索引
-│       │   ├── scripts/
-│       │   │   ├── core/utils.js        # 公共工具（始终首个加载）
-│       │   │   ├── monitors/            # 14 个监控模块（纯观察）
-│       │   │   ├── bypass/              # 9 个干预模块（反检测等）
-│       │   │   ├── utils/               # 脱壳/ELF/二进制/修复工具
-│       │   │   │   ├── unpack.py            # 一键脱壳入口
-│       │   │   │   ├── elfinfo.py           # ELF 侦察（段/依赖/导出入/重定位/vaddr↔offset）
-│       │   │   │   ├── fix_axml.py          # 爱加密魔改 AXML 修复
-│       │   │   │   ├── scan_register_natives.js  # Dex2C 定位
-│       │   │   │   └── ...                  # find_strref / dex_* 等
-│       │   │   ├── checklist/           # 合规检测项
-│       │   │   └── templates/           # 分析模板
-│       │   └── tools/                   # 独立检测工具（无需 Frida）
-│       │       ├── check-anti-inject.bat    # 注入检测
-│       │       ├── debug-gdb.py             # 调试检测（ptrace/TracerPid）
-│       │       ├── janus_check.py           # Janus/签名验证（备选路径）
-│       │       └── check-janus.bat          # APK 元数据（GetAPKInfo.jar）
+│       │   └── scripts/             # Frida JS 模块（由 frida -l 加载）
+│       │       ├── core/utils.js        # 公共工具（始终首个加载）
+│       │       ├── monitors/            # 14 个监控模块（纯观察）
+│       │       ├── bypass/              # 9 个干预模块（反检测等）
+│       │       ├── utils/               # 内存 dump JS（so_dump / dex_* / codeitem）
+│       │       ├── checklist/           # 检测清单脚本
+│       │       └── templates/           # 模板（analysis.py / custom_hook.js）
 │       ├── rev-symbol/              # 无符号 .so 函数命名（Ghidra MCP）
 │       ├── rev-struct/              # 结构体恢复（偏移访问聚合）
-│       ├── rev-unicorn-debug/       # Unicorn 模拟调试（+ uniharness.py）
+│       ├── rev-unicorn-debug/       # Unicorn 模拟调试（工具在 tools/）
 │       ├── rev-dex-dumper/          # 运行时 DEX 脱壳（panda + mem，ptrace-free）
 │       └── karpathy-guidelines/     # 编码准则（开发辅助）
-├── tools/
-│   └── hap_parser.py               # HAP（鸿蒙）包信息解析
+├── tools/                           # 独立工具（py/bat/jar，无 Frida 依赖）
+│   ├── elfinfo.py                   # ELF 侦察（段/依赖/导出入/重定位/vaddr↔offset）
+│   ├── disasm.py / find_strref.py / find_branch_callers.py   # 反汇编 / 字符串 / 调用者
+│   ├── unpack.py                    # 一键脱壳入口
+│   ├── dex_rebuilder.py / dex_dedupe.py                      # DEX 修复 / 去重
+│   ├── fix_elf.py / fix_axml.py / scan_inline_svc.py / patch_gadget_threadnames.py
+│   ├── frida_run.py                 # 非交互 Frida 运行（无人值守）
+│   ├── device_ui.py                 # 设备交互（元素树/点击/输入/截图）
+│   ├── emu_run.py / uniharness.py   # Unicorn 离线仿真
+│   ├── check-anti-inject.bat / check-janus.bat / debug-gdb.py / janus_check.py  # 检测项
+│   └── hap_parser.py                # HAP（鸿蒙）包信息解析
+├── feedback/FEEDBACK.md            # agent 级反馈闭环（本地保留，不入库）
 ├── requirements.txt                # Python 依赖（frida/unicorn/capstone/…）
-├── feedback/FEEDBACK.md            # 分析反馈闭环（本地保留，不入库）
 ├── kilo.json                       # MCP 配置（jadx-mcp / ghidra-mcp，本地保留，不入库）
 ├── AGENTS.md                       # 开发规范（AI 编码约束）
 └── README.md / README.en.md        # 本文件

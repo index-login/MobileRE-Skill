@@ -46,8 +46,8 @@ Just **describe your need in one sentence** — the AI follows the decision tree
 A **complete RE agent skill system**, not a script collection:
 
 - 🧠 **Agent brain** (`.kilo/agent/reverser.md`) — RE role definition, auto-selects modules via the decision tree
-- 📚 **Domain knowledge** (`.kilo/skill/`) — dynamic analysis control (9 technique domains) + native deep-dive capabilities (symbol/struct recovery, offline emulation, in-memory DEX dump)
-- 🔧 **Capability units** (`scripts/`) — 23 Frida modules (monitors 14 + bypass 9) + 16 binary/repair tools + checklists
+- 📚 **Domain knowledge** (`references/` project wiki + `.kilo/skill/`) — 9 technique domain manuals (full index in `_index.md`) + dynamic analysis control + native deep-dive capabilities (symbol/struct recovery, offline emulation, in-memory DEX dump)
+- 🔧 **Capability units** (`scripts/`) — 23 Frida modules (monitors 14 + bypass 9) + 18 binary/repair/runner tools + checklists
 - 🛠️ **Compliance detection** — injection, debugging, WebView SSL, APK metadata/signature
 - 🔌 **MCP integration** (`kilo.json`) — jadx-mcp (Java decompile) + ghidra-mcp (binary analysis)
 
@@ -71,16 +71,16 @@ A **complete RE agent skill system**, not a script collection:
 │                 AI Agent (Kilo)                             │
 │  .kilo/agent/reverser.md  — Agent role definition           │
 │  .kilo/skill/.../SKILL.md — task routing + decision tree    │
-│  feedback/FEEDBACK.md     — analysis feedback loop          │
+│  feedback/FEEDBACK.md     — agent-level feedback loop       │
 ├────────────────────────────────────────────────────────────┤
-│               Frida Dynamic Hook Modules                    │
+│               Frida Dynamic Hook Modules (skill scripts/)   │
 │  monitors/ (14) — observe only, no behavior modification    │
 │  bypass/   (9)  — actively modify app behavior              │
-│  utils/            — unpacking/decompile/symbol tools       │
+│  utils/            — in-memory dump / runtime JS tools      │
 ├────────────────────────────────────────────────────────────┤
-│               Python Binary Analysis Tools                  │
-│  elfinfo · find_branch_callers · find_strref · fix_elf     │
-│  fix_axml · scan_inline_svc · so_dump · hap_parser         │
+│               Standalone Tools (tools/ at repo root)        │
+│  elfinfo · disasm · unpack · dex_* · frida_run · device_ui │
+│  emu_run · so_dump · fix_elf · fix_axml · hap_parser · det │
 ├────────────────────────────────────────────────────────────┤
 │               MCP Integration (kilo.json)                   │
 │  jadx-mcp  — AI reads Java source directly                  │
@@ -105,48 +105,49 @@ A **complete RE agent skill system**, not a script collection:
 
 ```
 MobileRE-Skill/
+├── references/                      # Technique manuals wiki (project-level, index in _index.md)
+│   ├── _index.md                    # Index: purpose / when to read / resident
+│   ├── unpacking.md                 # Unpacking
+│   ├── anti-detection.md            # Environment countermeasures
+│   ├── crypto-hook.md               # Crypto/function hook
+│   ├── behavior-analysis.md         # Behavior analysis
+│   ├── static-analysis.md           # Static attack surface
+│   ├── native-analysis.md           # SO-layer analysis
+│   ├── troubleshooting.md           # Troubleshooting
+│   ├── api-reference.md             # Frida API reference
+│   ├── articles.md                  # Article index
+│   └── smoke-test.md                # Smoke self-test (misc)
 ├── .kilo/
 │   ├── agent/
-│   │   └── reverser.md              # Agent role definition (RE researcher)
+│   │   └── reverser.md              # Agent role definition (work discipline + key manuals)
 │   └── skill/
 │       ├── frida-mobile-security/   # Dynamic analysis control (Frida + jadx/ghidra MCP)
 │       │   ├── SKILL.md             # Control: task routing + decision tree + module index
-│       │   ├── references/          # 9 technique domain manuals
-│       │   │   ├── unpacking.md         # Unpacking
-│       │   │   ├── anti-detection.md    # Environment countermeasures
-│       │   │   ├── crypto-hook.md       # Crypto/function hook
-│       │   │   ├── behavior-analysis.md # Behavior analysis
-│       │   │   ├── static-analysis.md   # Static attack surface
-│       │   │   ├── native-analysis.md   # SO-layer analysis
-│       │   │   ├── troubleshooting.md   # Troubleshooting
-│       │   │   ├── api-reference.md     # Frida API reference
-│       │   │   └── articles.md          # Article index
-│       │   ├── scripts/
-│       │   │   ├── core/utils.js        # Common utils (always loaded first)
-│       │   │   ├── monitors/            # 14 monitoring modules (observe only)
-│       │   │   ├── bypass/              # 9 intervention modules (anti-detection etc.)
-│       │   │   ├── utils/               # Unpacking/ELF/binary/repair tools
-│       │   │   │   ├── unpack.py            # One-command unpacking entry
-│       │   │   │   ├── elfinfo.py           # ELF recon (segments/deps/imports/exports/relocs/vaddr↔offset)
-│       │   │   │   ├── fix_axml.py          # ijiami-mangled AXML repair
-│       │   │   │   ├── scan_register_natives.js  # Dex2C location
-│       │   │   │   └── ...                  # find_strref / dex_* etc.
-│       │   │   ├── checklist/           # Compliance check items
-│       │   │   └── templates/           # Analysis templates
-│       │   └── tools/                   # Standalone detection tools (no Frida)
-│       │       ├── check-anti-inject.bat    # Injection detection
-│       │       ├── debug-gdb.py             # Debug detection (ptrace/TracerPid)
-│       │       ├── janus_check.py           # Janus/signature verification (fallback path)
-│       │       └── check-janus.bat          # APK metadata (GetAPKInfo.jar)
+│       │   └── scripts/             # Frida JS modules (loaded via frida -l)
+│       │       ├── core/utils.js        # Common utils (always loaded first)
+│       │       ├── monitors/            # 14 monitoring modules (observe only)
+│       │       ├── bypass/              # 9 intervention modules (anti-detection etc.)
+│       │       ├── utils/               # In-memory dump JS (so_dump / dex_* / codeitem)
+│       │       ├── checklist/           # Check items
+│       │       └── templates/           # Templates (analysis.py / custom_hook.js)
 │       ├── rev-symbol/              # Stripped .so function naming (Ghidra MCP)
 │       ├── rev-struct/              # Struct recovery (offset-access aggregation)
-│       ├── rev-unicorn-debug/       # Unicorn emulation debug (+ uniharness.py)
+│       ├── rev-unicorn-debug/       # Unicorn emulation debug (tools live in tools/)
 │       ├── rev-dex-dumper/          # Runtime DEX dump (panda + mem, ptrace-free)
 │       └── karpathy-guidelines/     # Coding guidelines (dev aid)
-├── tools/
-│   └── hap_parser.py               # HAP (HarmonyOS) package info parser
+├── tools/                           # Standalone tools (py/bat/jar, no Frida)
+│   ├── elfinfo.py                   # ELF recon (segments/deps/imports/exports/relocs/vaddr↔offset)
+│   ├── disasm.py / find_strref.py / find_branch_callers.py   # Disasm / string refs / callers
+│   ├── unpack.py                    # One-command unpacking entry
+│   ├── dex_rebuilder.py / dex_dedupe.py                      # DEX repair / dedupe
+│   ├── fix_elf.py / fix_axml.py / scan_inline_svc.py / patch_gadget_threadnames.py
+│   ├── frida_run.py                 # Non-interactive Frida runner (unattended)
+│   ├── device_ui.py                 # Device UI (elements/tap/text/shot)
+│   ├── emu_run.py / uniharness.py   # Unicorn offline emulation
+│   ├── check-anti-inject.bat / check-janus.bat / debug-gdb.py / janus_check.py  # Detection
+│   └── hap_parser.py                # HAP (HarmonyOS) package info parser
+├── feedback/FEEDBACK.md            # Agent-level feedback loop (local only, not committed)
 ├── requirements.txt                # Python deps (frida/unicorn/capstone/…)
-├── feedback/FEEDBACK.md            # Analysis feedback loop (local only, not committed)
 ├── kilo.json                       # MCP config (jadx-mcp / ghidra-mcp; local only, not committed)
 ├── AGENTS.md                       # Dev conventions (AI coding constraints)
 └── README.md / README.en.md        # This file
