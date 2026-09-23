@@ -208,11 +208,25 @@ Ghidra MCP 支持反编译 + 调试（`ghidra_*` 工具），用于分析 so 的
 | `tools/find_branch_callers.py` | 定位函数调用者（交叉引用） |
 | `tools/disasm.py` | 快速反汇编（按 symbol/vaddr，capstone；Ghidra 未启动时的 fallback） |
 | `tools/jni_sig.py` | JNI 导出签名侦察（JNI 调用点清单 + Java 第 1 参类型推断：jstring/jbyteArray/…） |
+| `tools/emu_run.py` | 单函数离线仿真（Unicorn）；内置观测层 `--watch-code/--watch-regs/--watch-buf/--watch-read/--watch-write/--scan`（超限自动聚合，防日志爆炸） |
+| `tools/trace_recon.py` | 仿真 trace 状态重建：观测日志 → 缓冲状态序列（COPY/PASS 自动分段，支持 `--json`） |
+| `tools/cipher_lab.py` | 密码结构判定器：`layers`（层写法双轨迹判定）/ `table`（白盒表 S(Y⊕k)⊕c 反推）/ `schedule`（轮密钥→标准 AES-128 编排归因，出主密钥） |
 | `tools/scan_inline_svc.py` | 扫描内联 SVC 指令（检测代码特征） |
 | `tools/fix_elf.py` | 修复 ELF header（dump 后） |
 | `tools/patch_gadget_threadnames.py` | patch gadget 线程名 |
 
-### 3.3 定位目标函数的方法（优先级从高到低）
+### 3.3 算法结构复原流水线（仿真 / 真机 双路径）
+
+观测 → 重建 → 判定 三段式，两个来源共用同一条管道（日志格式 `[wr] addr size=N val=0xV pc=0xPC`）：
+
+- **仿真路径（优先）**：`tools/emu_run.py --watch-code/--watch-buf/--watch-read/--watch-write/--scan`（可反复、可 poke、无检测）
+- **真机路径**（目标无法仿真 / VM 化 / 依赖运行时）：`scripts/monitors/mem_trace.js` + `tools/frida_run.py -e @cfg.js`
+  配置示例：`var CONFIG_OVERRIDE={mem_trace:{ranges:[{module:"libfoo.so",off:0x15038,size:24,mode:"w"}]}};`
+- **重建**：`tools/trace_recon.py <日志> --base <armed 行打印的实际地址> --size N [--copy-pc ...]`
+- **判定**：`tools/cipher_lab.py layers`（层结构，双轨迹）/ `table`（`S(Y⊕k)⊕c` 表反推）/ `schedule`（AES 系编排归因，可直接出主密钥）
+- **边界**：① 白盒表若带线性编码（真·Chow 式），`layers/table` 不适用，需 DFA/BGE（未实现）② `mem_trace` 基于 MemoryAccessMonitor：默认单次触发（稳定），`rearm:true` 可在标准 server 上滚动捕获（魔改 server 有崩溃记录）③ `details.pc` 在部分 frida 版本不存在，取 `from`（模块内已兼容）
+
+### 3.4 定位目标函数的方法（优先级从高到低）
 
 1. **导出符号** → `Module.findExportByName()`
 2. **已知特征码** → `Memory.scan()` + 特征字节

@@ -56,7 +56,8 @@ steps: 300
 | `tools/frida_run.py <包名> -l <utils.js> -l <模块> -t 15` | 非交互 Frida 运行（spawn/attach → 加载 → 观察 N 秒 → 存活报告） |
 | `tools/device_ui.py elements\|tap --text/--id\|wait-for\|text\|launch\|clear\|stayon\|wake\|shot\|logs` | 设备交互：元素树/语义点击/等待/输入/启动/常亮——设备操作只用它 |
 | `tools/unpack.py` | Frida 脱壳：触发回填 + 结构级 dump + fix-checksum + 去重 |
-| `tools/emu_run.py <so> --sym <符号> [--jni] [--poke addr:size=val] [--poke-str addr=text] [--args ...]` | 单函数离线仿真（Unicorn，JNI/libc 打桩 + 重定位），无设备复算算法 |
+| `tools/emu_run.py <so> --sym <符号> [--jni] [--poke addr:size=val] [--poke-str addr=text] [--args ...]` | 单函数离线仿真（Unicorn，JNI/libc 打桩 + 重定位），无设备复算算法；内置观测层 `--watch-*/--scan` |
+| `tools/trace_recon.py` / `tools/cipher_lab.py` | 白盒/密码结构分析：trace 状态重建（COPY/PASS 分段）/ 层写法双轨迹判定 / 表反推 / 编排归因（出主密钥） |
 | `tools/check-anti-inject.bat` / `tools/debug-gdb.py` / `tools/janus_check.py` | 检测项（无需 Frida）：注入 / 调试 / Janus |
 
 命令中的脚本路径按需写全（当前工作目录为项目根，如 `-l .kilo/skill/frida-mobile-security/scripts/core/utils.js`）。

@@ -28,7 +28,7 @@ Just **describe your need in one sentence** — the AI follows the decision tree
 | Scenario | Example request | What the AI does |
 |----------|-----------------|------------------|
 | 🎯 **Unpacking** | "Unpack this app for me" | Multiple methods by scenario: one-command Frida unpacking (restore/fix/dedupe/method-body marking), or in-memory DEX dump (panda + mem dumpers, ptrace-free, stealthier under anti-debugging) |
-| 🔐 **Crypto analysis** | "Find this app's crypto algorithm and keys" | Java + Native dual-layer crypto auto-dump: algorithm/key/IV/plaintext |
+| 🔐 **Crypto analysis** | "Find this app's crypto algorithm and keys" | Java + Native dual-layer crypto auto-dump: algorithm/key/IV/plaintext; signature / custom / obfuscated algorithms are also recovered and replayable offline |
 | 🛡️ **Anti-detection bypass** | "Frida crashes on attach, bypass it" | 6-phase pipeline: locate detection SO → hook init_array → keep alive → NOP crash functions |
 | 🔍 **Behavior profiling** | "What is this app doing in secret?" | File/network/thread/process/Intent monitoring, behavior profile output |
 | 🧩 **Dex2C/VMP analysis** | "This crypto is native, analyze the logic" | Locate `so+offset`, hook-first / unidbg replay / Ghidra pseudocode |
@@ -47,7 +47,7 @@ A **complete RE agent skill system**, not a script collection:
 
 - 🧠 **Agent brain** (`.kilo/agent/reverser.md`) — RE role definition, auto-selects modules via the decision tree
 - 📚 **Domain knowledge** (`references/` project wiki + `.kilo/skill/`) — 9 technique domain manuals (full index in `_index.md`) + dynamic analysis control + native deep-dive capabilities (symbol/struct recovery, offline emulation, in-memory DEX dump)
-- 🔧 **Capability units** (`scripts/`) — 23 Frida modules (monitors 14 + bypass 9) + 18 binary/repair/runner tools + checklists
+- 🔧 **Capability units** (`scripts/`) — 24 Frida modules (monitors 15 + bypass 9) + 26 standalone tools + checklists
 - 🛠️ **Compliance detection** — injection, debugging, WebView SSL, APK metadata/signature
 - 🔌 **MCP integration** (`kilo.json`) — jadx-mcp (Java decompile) + ghidra-mcp (binary analysis)
 
@@ -74,13 +74,13 @@ A **complete RE agent skill system**, not a script collection:
 │  feedback/FEEDBACK.md     — agent-level feedback loop       │
 ├────────────────────────────────────────────────────────────┤
 │               Frida Dynamic Hook Modules (skill scripts/)   │
-│  monitors/ (14) — observe only, no behavior modification    │
+│  monitors/ (15) — observe only, no behavior modification    │
 │  bypass/   (9)  — actively modify app behavior              │
 │  utils/            — in-memory dump / runtime JS tools      │
 ├────────────────────────────────────────────────────────────┤
 │               Standalone Tools (tools/ at repo root)        │
 │  elfinfo · disasm · unpack · dex_* · frida_run · device_ui │
-│  emu_run · so_dump · fix_elf · fix_axml · hap_parser · det │
+│  emu_run · trace_recon · cipher_lab · fix_elf · det        │
 ├────────────────────────────────────────────────────────────┤
 │               MCP Integration (kilo.json)                   │
 │  jadx-mcp  — AI reads Java source directly                  │
@@ -125,7 +125,7 @@ MobileRE-Skill/
 │       │   ├── SKILL.md             # Control: task routing + decision tree + module index
 │       │   └── scripts/             # Frida JS modules (loaded via frida -l)
 │       │       ├── core/utils.js        # Common utils (always loaded first)
-│       │       ├── monitors/            # 14 monitoring modules (observe only)
+│       │       ├── monitors/            # 15 monitoring modules (observe only)
 │       │       ├── bypass/              # 9 intervention modules (anti-detection etc.)
 │       │       ├── utils/               # In-memory dump JS (so_dump / dex_* / codeitem)
 │       │       ├── checklist/           # Check items
@@ -143,7 +143,8 @@ MobileRE-Skill/
 │   ├── fix_elf.py / fix_axml.py / scan_inline_svc.py / patch_gadget_threadnames.py
 │   ├── frida_run.py                 # Non-interactive Frida runner (unattended)
 │   ├── device_ui.py                 # Device UI (elements/tap/text/shot)
-│   ├── emu_run.py / uniharness.py   # Unicorn offline emulation
+│   ├── emu_run.py / uniharness.py   # Unicorn offline emulation (--watch-* observability)
+│   ├── trace_recon.py / cipher_lab.py  # log -> state reconstruction / cipher structure adjudication
 │   ├── check-anti-inject.bat / check-janus.bat / debug-gdb.py / janus_check.py  # Detection
 │   └── hap_parser.py                # HAP (HarmonyOS) package info parser
 ├── feedback/FEEDBACK.md            # Agent-level feedback loop (local only, not committed)

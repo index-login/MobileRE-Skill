@@ -13,6 +13,7 @@
   -U            使用 USB 设备
   -f pkg        spawn 并挂载（推荐，hook 早于应用代码；resume 由本工具控制）
   -n name       attach 到已运行进程：支持进程名 / 包名 / App label（自动解析）
+  -e 'js'       附加 JS 源码（如 var CONFIG_OVERRIDE={...};），先于 -l 注入，可重复
   -l file       加载脚本，可重复（首个必须是 scripts/core/utils.js；支持 skill 内相对路径）
   -t seconds    保持挂载的时长，默认 15
   --kill        结束时杀掉目标进程
@@ -115,6 +116,18 @@ def emit(line):
     print(line, flush=True)
 
 
+def expand_eval(items):
+    """-e 值展开：'@file.js' 读文件（避免 PowerShell 引号转义问题），否则按字面 JS。"""
+    out = []
+    for it in items:
+        if it.startswith("@"):
+            with open(it[1:], encoding="utf-8") as f:
+                out.append(f.read())
+        else:
+            out.append(it)
+    return out
+
+
 def diagnose(detach, log_text):
     sig = (detach.get("signal") or "") if detach else ""
     if sig or CRASH_PAT.search(log_text):
@@ -144,6 +157,8 @@ def main():
     ap.add_argument("-F", "--frontmost", action="store_true", help="attach to frontmost app (frida -F)")
     ap.add_argument("--host-fallback", help="spawn 被 server 判为 jailed 时回退的 host:port")
     ap.add_argument("--runtime", default="", help="script runtime: v8 | qjs")
+    ap.add_argument("-e", "--eval", action="append", default=[],
+                    help="附加 JS 源码，先于 -l 注入（可重复）；'@file.js' 从文件读取（绕开 shell 引号）")
     ap.add_argument("-l", "--load", action="append", default=[], help="script file to load")
     ap.add_argument("-t", "--timeout", type=int, default=15, help="seconds to stay attached")
     ap.add_argument("--kill", action="store_true", help="kill target process at the end")
@@ -221,7 +236,7 @@ def main():
 
     session.on("detached", _on_detached)
 
-    src = "\n".join(open(p, encoding="utf-8").read() for p in args.load)
+    src = "\n".join(expand_eval(args.eval) + [open(p, encoding="utf-8").read() for p in args.load])
     script = create_script(session, src, args.runtime)
 
     try:

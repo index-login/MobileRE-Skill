@@ -48,6 +48,8 @@ python3 tools/emu_run.py libfoo.so --sym Java_pkg_Cls_method --jni --args "env,0
 
 Options: `--off 0x..` (address instead of symbol), `--imp` (extra import stubs), `--trace`, `--timeout`, `--raw`, `--setup hooks.py` (full `Harness` access).
 
+Observability layer (white-box / VM / algorithm work): `--watch-code PC --watch-regs x0,x1 --watch-buf "x19+0x61f0:16"`, `--watch-read/--watch-write lo-hi` (auto-aggregated beyond `--watch-max`), `--scan hex[,hex] [--scan-at PC]`. Pair with `tools/trace_recon.py` (event log -> buffer state sequence) and `tools/cipher_lab.py` (layer/table/schedule adjudication).
+
 ---
 
 ## Core Principles
