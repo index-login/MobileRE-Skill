@@ -34,7 +34,7 @@ Just **describe your need in one sentence** — the AI follows the decision tree
 | 🧩 **Dex2C/VMP analysis** | "This crypto is native, analyze the logic" | Locate `so+offset`, hook-first / unidbg replay / Ghidra pseudocode |
 | 🧬 **Static attack surface** | "Audit this app's attack surface" | Enumerate exported components/Provider/WebView from Manifest, source→sink tracking |
 | 🧪 **Security compliance** | "Check this app's security compliance" | Auto-run compliance checks (injection/debug/WebView SSL/metadata), report results |
-| 🧷 **SO symbol/struct recovery** | "This .so is stripped, recover function names and structs" | Offline ELF recon (`elfinfo`/`find_*`) → Ghidra MCP cross-reference inference → rename + struct definition |
+| 🧷 **SO symbol/struct recovery** | "This .so is stripped, recover function names and structs" | Offline SO static analysis (`so.py` info/strings/strref/callers) → Ghidra MCP cross-reference inference → rename + struct definition |
 | 🦄 **Offline emulation** | "Emulate this native function without a device" | Unicorn loads the .so, stubs JNI/libc/syscalls, runs the target function and returns results |
 
 > All operations are done by the AI — no need to type commands or run scripts yourself.
@@ -47,7 +47,7 @@ A **complete RE agent skill system**, not a script collection:
 
 - 🧠 **Agent brain** (`.kilo/agent/reverser.md`) — RE role definition, auto-selects modules via the decision tree
 - 📚 **Domain knowledge** (`references/` project wiki + `.kilo/skill/`) — 9 technique domain manuals (full index in `_index.md`) + dynamic analysis control + native deep-dive capabilities (symbol/struct recovery, offline emulation, in-memory DEX dump)
-- 🔧 **Capability units** (`scripts/`) — 24 Frida modules (monitors 15 + bypass 9) + 26 standalone tools + checklists
+- 🔧 **Capability units** (`scripts/`) — 24 Frida modules (monitors 15 + bypass 9) + 21 standalone tools + checklists
 - 🛠️ **Compliance detection** — injection, debugging, WebView SSL, APK metadata/signature
 - 🔌 **MCP integration** (`kilo.json`) — jadx-mcp (Java decompile) + ghidra-mcp (binary analysis)
 
@@ -79,8 +79,8 @@ A **complete RE agent skill system**, not a script collection:
 │  utils/            — in-memory dump / runtime JS tools      │
 ├────────────────────────────────────────────────────────────┤
 │               Standalone Tools (tools/ at repo root)        │
-│  elfinfo · disasm · unpack · dex_* · frida_run · device_ui │
-│  emu_run · trace_recon · cipher_lab · fix_elf · det        │
+│  so.py · unpack · dex_* · frida_run · device_ui             │
+│  emu_run · trace_recon · cipher_lab · fix_elf · det         │
 ├────────────────────────────────────────────────────────────┤
 │               MCP Integration (kilo.json)                   │
 │  jadx-mcp  — AI reads Java source directly                  │
@@ -136,11 +136,10 @@ MobileRE-Skill/
 │       ├── rev-dex-dumper/          # Runtime DEX dump (panda + mem, ptrace-free)
 │       └── karpathy-guidelines/     # Coding guidelines (dev aid)
 ├── tools/                           # Standalone tools (py/bat/jar, no Frida)
-│   ├── elfinfo.py                   # ELF recon (segments/deps/imports/exports/relocs/vaddr↔offset)
-│   ├── disasm.py / find_strref.py / find_branch_callers.py   # Disasm / string refs / callers
+│   ├── so.py                        # SO static analysis all-in-one (ELF recon/strings/bytes/disasm/xrefs/SVC/JNI typing)
 │   ├── unpack.py                    # One-command unpacking entry
 │   ├── dex_rebuilder.py / dex_dedupe.py                      # DEX repair / dedupe
-│   ├── fix_elf.py / fix_axml.py / scan_inline_svc.py / patch_gadget_threadnames.py
+│   ├── fix_elf.py / fix_axml.py / patch_gadget_threadnames.py
 │   ├── frida_run.py                 # Non-interactive Frida runner (unattended)
 │   ├── device_ui.py                 # Device UI (elements/tap/text/shot)
 │   ├── emu_run.py / uniharness.py   # Unicorn offline emulation (--watch-* observability)
@@ -182,7 +181,9 @@ pip install -r requirements.txt
 | `unicorn` | CPU emulation (offline SO analysis / emulation debug) |
 | `capstone` | Disassembly (emulation tracing / instruction-level debug) |
 | `keystone-engine` | Assembly (emulation stubs) |
-| `pyelftools` | ELF parsing (`elfinfo.py` etc.) |
+| `pyelftools` | ELF parsing (`so.py` / `uniharness.py` etc.) |
+| `lief` | ELF rewriting (dump repair/rebuild, patch constants, add sections/`DT_NEEDED`) |
+| `z3-solver` | Constraint solving (infer inputs from condition/result; pairs with the emu observation layer) |
 
 ### MCP setup (AI reads source / disassembly directly)
 

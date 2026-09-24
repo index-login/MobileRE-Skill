@@ -141,6 +141,23 @@ Google Auth Library `OAuth2Credentials`：`transportFactoryClassName` 字段可�
 
 ---
 
+## 六、Windows 注意
+
+- **不要加 `--fs-case-sensitive`**：jadx 默认 case-fix 做别名兼容（实测同一 APK 默认输出 2919 个 `.java`，加该参数只剩 1952 个，丢类）；Windows 文件系统大小写不敏感。
+- **目录名 ≠ 包名**：输出目录名是 case-fix 别名（如全小写），以文件内 `package` 声明 + 文件头 `renamed from:` 注释为准。
+
+## 七、Compose / R8 短名应用的校验点定位
+
+R8 全量混淆后类/方法只剩 `a` / `b` / `lambda$...` 短名，顺调用链读会迷路。策略：**从可观测锚点反向定位**——
+
+1. 界面文案 / 错误提示 / 日志字符串 → 找到引用它的类
+2. 资源键（`jadx_get_resource_file`）、SharedPreferences 键、数据库表名/列名
+3. 网络路径与常量（`/verify`、`token`、hash 常量等）
+
+由锚点类反查校验点方法（`jadx_search_method_by_name` 搜 `check`/`verify` 等方法名），**不要沿 Compose lambda 链**（`Function0/1/2` 内联后无稳定结构）逐层读。
+
+---
+
 ## 与动态分析的配合
 
 **静态找可能，动态验证实。** JADX 找代码路径（广度），Frida 验证运行时可达性（精度）。

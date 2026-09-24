@@ -27,6 +27,10 @@
 
     var BLOCK_STATS = {};
 
+    function toInt(v) {
+        return (typeof v === 'number') ? v : v.toInt32();
+    }
+
     function shouldAllow() {
         var tid = Process.getCurrentThreadId();
         for (var i = 0; i < CONFIG.allowTids.length; i++) {
@@ -40,7 +44,7 @@
         BLOCK_STATS[label] = (BLOCK_STATS[label] || 0) + 1;
         U.alert("BLOCKED: " + label + " " + (detail || "") + " (count=" + BLOCK_STATS[label] + ")");
         if (CONFIG.showBacktrace) {
-            U.logBacktrace(this.context || null, CONFIG.backtraceDepth);
+            U.logBacktrace((this && this.context) || null, CONFIG.backtraceDepth);
         }
     }
 
@@ -93,14 +97,29 @@
             var addr = Module.findExportByName(moduleName, funcName);
             if (!addr) return;
             Interceptor.replace(addr, new NativeCallback(function (pid, sig) {
-                if (pid.toInt32() === Process.id && [1, 3, 4, 6, 9, 11, 15].indexOf(sig.toInt32()) !== -1) {
+                if (toInt(pid) === Process.id && [1, 3, 4, 6, 9, 11, 15].indexOf(toInt(sig)) !== -1) {
                     logBlock(label, "pid=" + pid + " sig=" + sig);
                 }
+                return 0;
             }, 'int', ['int', 'int']));
             U.ok(label + " REPLACED: " + funcName);
         } catch (e) {
             U.fail(label + " replace failed: " + e.message);
         }
+    }
+
+    function replaceTgkill() {
+        try {
+            var addr = Module.findExportByName("libc.so", "tgkill");
+            if (!addr) return;
+            Interceptor.replace(addr, new NativeCallback(function (tgid, tid, sig) {
+                if (toInt(tgid) === Process.id && [1, 3, 4, 6, 9, 11, 15].indexOf(toInt(sig)) !== -1) {
+                    logBlock("tgkill", "tgid=" + tgid + " tid=" + tid + " sig=" + sig);
+                }
+                return 0;
+            }, 'int', ['int', 'int', 'int']));
+            U.ok("tgkill REPLACED: tgkill");
+        } catch (e) { U.fail("tgkill replace failed: " + e.message); }
     }
 
     // ========== libc 层 ==========
@@ -112,16 +131,17 @@
         replaceVoidFunction("libc.so", "quick_exit", "quick_exit");
         replaceAbort();
         replaceKill("libc.so", "kill", "kill");
-        replaceKill("libc.so", "tgkill", "tgkill");
+        replaceTgkill();
 
         // raise
         try {
             var raiseAddr = Module.findExportByName("libc.so", "raise");
             if (raiseAddr) {
                 Interceptor.replace(raiseAddr, new NativeCallback(function (sig) {
-                    if ([6, 9, 15].indexOf(sig.toInt32()) !== -1) {
+                    if ([6, 9, 15].indexOf(toInt(sig)) !== -1) {
                         logBlock("raise", "sig=" + sig);
                     }
+                    return 0;
                 }, 'int', ['int']));
                 U.ok("raise REPLACED");
             }

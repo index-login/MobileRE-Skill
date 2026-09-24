@@ -48,17 +48,20 @@ steps: 300
 
 脚本路径基准：独立工具（`tools/`）相对项目根；Frida 模块相对 skill 根 `.kilo/skill/frida-mobile-security/`（模块位置见 SKILL.md 模块目录，唯一索引）。需要 Frida 长尾参数时直接用原生 `frida` CLI（始终可用）。
 
-| 工具 | 用途 |
+| 当你要… | 命令 |
 |------|------|
-| `tools/elfinfo.py <so> [--json] [--v2o 0x..]` | ELF 侦察（段/依赖/导入/导出/重定位/vaddr↔offset） |
-| `tools/disasm.py <so> [--symbol X \| --addr 0x..] [--count N]` | 快速反汇编（Ghidra 未启动时的 fallback） |
-| `tools/find_strref.py` / `find_branch_callers.py` | 字符串引用 / 调用者定位 |
-| `tools/frida_run.py <包名> -l <utils.js> -l <模块> -t 15` | 非交互 Frida 运行（spawn/attach → 加载 → 观察 N 秒 → 存活报告） |
-| `tools/device_ui.py elements\|tap --text/--id\|wait-for\|text\|launch\|clear\|stayon\|wake\|shot\|logs` | 设备交互：元素树/语义点击/等待/输入/启动/常亮——设备操作只用它 |
-| `tools/unpack.py` | Frida 脱壳：触发回填 + 结构级 dump + fix-checksum + 去重 |
-| `tools/emu_run.py <so> --sym <符号> [--jni] [--poke addr:size=val] [--poke-str addr=text] [--args ...]` | 单函数离线仿真（Unicorn，JNI/libc 打桩 + 重定位），无设备复算算法；内置观测层 `--watch-*/--scan` |
-| `tools/trace_recon.py` / `tools/cipher_lab.py` | 白盒/密码结构分析：trace 状态重建（COPY/PASS 分段）/ 层写法双轨迹判定 / 表反推 / 编排归因（出主密钥） |
-| `tools/check-anti-inject.bat` / `tools/debug-gdb.py` / `tools/janus_check.py` | 检测项（无需 Frida）：注入 / 调试 / Janus |
+| 看 so 有哪些字符串/常量（正查） | `tools/so.py strings <so> [--min N] [--grep PAT]` |
+| 按虚址/偏移看字节（hex+ascii） | `tools/so.py dump <so> 0xVADDR:LEN [--off]` |
+| 找符号/导出地址、段/依赖/重定位 | `tools/so.py info <so> [--grep NAME] [--json]` |
+| vaddr↔offset 换算 | `tools/so.py info <so> --v2o 0x…` |
+| 反查"谁引用了这个字符串" | `tools/so.py strref <so> 0xSTR` |
+| 反查"谁调用了这个函数" | `tools/so.py callers <so> 0xFUNC` |
+| 扫内联 syscall（反检测判断） | `tools/so.py svc <so>` |
+| 反汇编（函数/地址） | `tools/so.py disasm <so> --symbol X / --addr 0x…` |
+| JNI 签名判型（hook 前置） | `tools/so.py jni <so> --symbol Java_…` |
+| 离线跑算法 | `tools/emu_run.py <so> --sym … [--jni]` |
+
+其余独立工具（`frida_run.py` 非交互运行 / `device_ui.py` 设备交互 / `unpack.py` 脱壳 / `trace_recon.py`+`cipher_lab.py` 白盒分析 / 检测项 bat）见 SKILL.md 模块目录。
 
 命令中的脚本路径按需写全（当前工作目录为项目根，如 `-l .kilo/skill/frida-mobile-security/scripts/core/utils.js`）。
 
@@ -69,7 +72,7 @@ steps: 300
 - **漏洞链思维。** 单点漏洞不可怕，链才是真正的威胁。从入口到最终危害，追踪完整攻击链：Intent Redirection → Content Provider 访问 → FileProvider 路径遍历 → 文件窃取。报告中必须描述完整链路，而非孤立漏洞。
 - **污点追踪。** 每条发现标注：source（外部输入：Intent extras、URI 参数、文件路径、网络请求）→ path（经过的代码路径）→ sink（危险操作：`startActivity`、`loadUrl`、`File.write`、`rawQuery`、`exec`）。
 - **静态找可能，动态验证实。** JADX 找代码路径（广度），Frida 验证运行时可达性（精度）。两者互补，不可偏废。
-- **工具优先，不自己造。** 遇到问题先查 `tools/`（项目根独立工具）与 skill 的 `scripts/` 有没有现成的（工具发现见「指向」）。
+- **工具优先，不自己造（含临时内联代码）。** 遇到问题先查 `tools/` 与 skill 的 `scripts/` 有没有现成的（工具发现见「指向」）；写 `python3 -c` / 临时脚本处理二进制前，**先跑对应 `tools/*.py --help`**；工具确缺 → 兜底并记 `tool` 缺口 feedback。
 - **每条结论标注代码位置。** 用表格汇总全链路审查结果，末尾附截图建议表。
 - **PoC 必须可复现。** 每条漏洞给出可执行的命令（如 `adb shell am start`）。
 - **报告持久化。** 每个 App 写入 `<包名>/REPORT.md`。

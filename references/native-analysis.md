@@ -106,7 +106,7 @@ ghidra_import_file ./libTdxAndroidCore.so
 ```
 
 - 已集成 `ghidra_*` MCP 工具，命令行/对话驱动，无需手动开 GUI
-- 配合 `tools/find_strref.py`（字符串引用）快速定位关键逻辑
+- 配合 `tools/so.py strref`（字符串引用）快速定位关键逻辑
 
 ### 2.3 定位流程
 
@@ -141,7 +141,7 @@ frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/native_hooker.j
 
 - 监控 EVP 加解密函数，内置 fallback 链：`EVP_CIPHER_CTX_cipher || EVP_CIPHER_CTX_get0_cipher`
 - 无输出时扩展 CRYPTO_SOS 列表：Flutter app 加 `libflutter.so`，Cronet 加 `libcronet.so`
-- 用 `tools/scan_inline_svc.py` 或内存常量扫描定位自研算法
+- 用 `tools/so.py svc` 或内存常量扫描定位自研算法
 
 ### 2.3 dl_monitor（SO 生命周期）
 
@@ -185,7 +185,7 @@ Interceptor.attach(addr, {
 
 - 模块未加载时装不上 → `Utils.waitForModule("libfoo.so", cb)`（spawn 早期 so 尚未 dlopen，直接 find 会静默失败）
 - **注意竞态**：`waitForModule` 是轮询（~100ms），so 加载后**立即调用**的 init/构造函数会漏 hook；对这类目标用 `native_hooker.js`（dlopen 同步安装）或 `init_hook.js`（call_constructors 抢时机）
-- **先确认前置条件**：目标可能只在输入满足条件（长度/格式）时才走到比较函数。用 `tools/disasm.py <so> --symbol <JNI导出>` 看判断分支，或 hook JNI 入口打印参数/返回值
+- **先确认前置条件**：目标可能只在输入满足条件（长度/格式）时才走到比较函数。用 `tools/so.py disasm <so> --symbol <JNI导出>` 看判断分支，或 hook JNI 入口打印参数/返回值
 
 ---
 
@@ -204,16 +204,19 @@ Ghidra MCP 支持反编译 + 调试（`ghidra_*` 工具），用于分析 so 的
 
 | 工具 | 用途 |
 |------|------|
-| `tools/find_strref.py` | 定位字符串引用（在 so 中找字符串的交叉引用） |
-| `tools/find_branch_callers.py` | 定位函数调用者（交叉引用） |
-| `tools/disasm.py` | 快速反汇编（按 symbol/vaddr，capstone；Ghidra 未启动时的 fallback） |
-| `tools/jni_sig.py` | JNI 导出签名侦察（JNI 调用点清单 + Java 第 1 参类型推断：jstring/jbyteArray/…） |
-| `tools/emu_run.py` | 单函数离线仿真（Unicorn）；内置观测层 `--watch-code/--watch-regs/--watch-buf/--watch-read/--watch-write/--scan`（超限自动聚合，防日志爆炸） |
+| `tools/so.py info/strings/dump` | ELF 侦察（段/依赖/导出/导入/重定位/vaddr↔offset）/ 字符串枚举 / 按址读字节 |
+| `tools/so.py strref` | 定位字符串引用（adr / adrp+add / adrp+ldr——Ghidra 自动 xref 失效的 adr 也能命中） |
+| `tools/so.py callers` | 定位函数调用者（BL / B / B.cond / CBZ / TBZ，可 `--bl-only`） |
+| `tools/so.py disasm` | 快速反汇编（按 symbol/vaddr，capstone；Ghidra 未启动时的 fallback，`--grep` 过滤） |
+| `tools/so.py jni` | JNI 导出签名侦察（JNI 调用点清单 + Java 第 1 参类型推断：jstring/jbyteArray/…） |
+| `tools/emu_run.py` | 单函数离线仿真（Unicorn）；内置观测层 `--watch-code/--watch-regs/--watch-buf/--watch-read/--watch-write/--scan`（超限自动聚合，防日志爆炸）；JNI/桩日志 `--log-jni/--trace-stubs/--stub name=val/--dump-jni-out FILE` |
 | `tools/trace_recon.py` | 仿真 trace 状态重建：观测日志 → 缓冲状态序列（COPY/PASS 自动分段，支持 `--json`） |
 | `tools/cipher_lab.py` | 密码结构判定器：`layers`（层写法双轨迹判定）/ `table`（白盒表 S(Y⊕k)⊕c 反推）/ `schedule`（轮密钥→标准 AES-128 编排归因，出主密钥） |
-| `tools/scan_inline_svc.py` | 扫描内联 SVC 指令（检测代码特征） |
+| `tools/so.py svc` | 扫描内联 SVC 指令（检测代码特征） |
 | `tools/fix_elf.py` | 修复 ELF header（dump 后） |
 | `tools/patch_gadget_threadnames.py` | patch gadget 线程名 |
+| `lief`（pip） | ELF 改写：dump so 的 header/段表修复重建、patch 常量、加节/改 `DT_NEEDED`、重定位与 `.init_array` 提取、内存 dump 回写成标准 ELF |
+| `z3-solver`（pip） | 约束求解：从"条件/结果"反推输入（校验/序列号、签名构造）；不执行代码，不可逆哈希无效 |
 
 ### 3.3 算法结构复原流水线（仿真 / 真机 双路径）
 
@@ -243,6 +246,33 @@ Ghidra MCP 支持反编译 + 调试（`ghidra_*` 工具），用于分析 so 的
 Memory.scan(mod.base, mod.size, "55 48 89 E5", { onMatch: function (address, size) { } });
 ```
 
+### 3.5 SO 分析顺序（`tools/so.py` 离线工具）
+
+一个 so 从"有什么"到"要 hook 什么"的标准下钻顺序（离线、可复现，不依赖 Ghidra/Frida/设备）：
+
+```
+info/strings 发现 → strref 引用 → disasm 上下文 → jni hook 前置 → (svc 下钻 / emu_run 复算)
+```
+
+1. **发现**：`tools/so.py info <so>` 看段/依赖/导出/导入/重定位（`--grep NAME` 直接在导出表里找函数，`--json` 供脚本消费）；`tools/so.py strings <so> --grep PAT` 找明文常量/日志串（输出 vaddr+file offset 双列）
+2. **引用**：拿到关键字符串 vaddr → `tools/so.py strref <so> 0xSTR` 反查引用点（支持 `adr` / `adrp+add` / `adrp+ldr`，混淆下 Ghidra 自动 xref 失效也能命中）
+3. **上下文**：`tools/so.py disasm <so> --addr 0x… --count N` 读引用点所在函数；有符号直接 `--symbol <导出>`；要调用链用 `tools/so.py callers <so> 0xFUNC`（BL/B/B.cond/CBZ/TBZ）
+4. **判型**：hook 前 `tools/so.py jni <so> --symbol Java_…` 判 Java 第 1 参类型（jstring/jbyteArray/…——按错类型读会把进程打崩在 agent 里）
+5. **下钻**：`tools/so.py svc <so>` 看是否绕过 libc 直接 syscall（决定 hook 层）；算法复算接 `tools/emu_run.py <so> --sym … [--jni]`
+
+旧工具 → 新命令：
+
+| 旧 | 新 |
+|---|---|
+| `elfinfo.py <so> [--json] [--v2o a]` | `so.py info <so> [--json] [--v2o a]` |
+| `elfinfo.py <so> --strings [N] --grep P` | `so.py strings <so> --min N --grep P` |
+| `elfinfo.py <so> --dump a:l` | `so.py dump <so> a:l [--off]` |
+| `disasm.py <so> …` | `so.py disasm <so> …` |
+| `find_strref.py <so> <a>` | `so.py strref <so> <a>` |
+| `find_branch_callers.py <so> <a>` | `so.py callers <so> <a>` |
+| `scan_inline_svc.py <so>` | `so.py svc <so>` |
+| `jni_sig.py <so> …` | `so.py jni <so> …` |
+
 ---
 
 ## 五、JNI 层分析
@@ -269,7 +299,7 @@ Interceptor.attach(RegisterNatives, {
 
 `Java_*` 导出的第 3 参（env、thiz 之后的第一个 Java 参数）可能是 `jstring`、`jbyteArray`、`jobject`……**按错类型读会把进程打崩在注入 agent 里**（tombstone pc 落在 `memfd:*`、`#00 GetStringUTFChars` 帧，极易误判为反调试）。
 
-1. **静态判型（首选）**：`python3 tools/jni_sig.py <so> --symbol <JNI导出>` —— 扫 `ldr xR,[xM,#imm]; blr xR` 解析 JNI API（arm64 offset = index×8），输出 `jbyteArray` / `jstring` / … 结论（L3 的 `bar`/`init` 实测判出 `jbyteArray`）
+1. **静态判型（首选）**：`python3 tools/so.py jni <so> --symbol <JNI导出>` —— 扫 `ldr xR,[xM,#imm]; blr xR` 解析 JNI API（arm64 offset = index×8），输出 `jbyteArray` / `jstring` / … 结论（L3 的 `bar`/`init` 实测判出 `jbyteArray`）
 2. **反汇编口径**：`ldr x8,[env]`（取 vtable）→ `ldr x8,[x8,#off]` → `blr x8`；常用 offset：`0x5c0=GetByteArrayElements`、`0x558=GetArrayLength`（jstring 系不在这些槽位，别按直觉猜）
 3. **Frida 读 byte[]**（偏移取自目标 so 自身反汇编，不凭猜）：
 
@@ -354,6 +384,6 @@ if (syscall) {
 | SO 加载追踪 | `utils + dl_monitor` |
 | 分层下钻 | `utils + native_hooker + syscall_tracer` |
 | 导入函数（strncmp/memcmp 等） | hook libc 导出 + `Process.findModuleByAddress(this.returnAddress)` 过滤（见 2.5） |
-| 字符串引用定位 | `tools/find_strref.py` + Ghidra |
-| 内联 SVC 扫描 | `tools/scan_inline_svc.py` |
+| 字符串引用定位 | `tools/so.py strref` + Ghidra |
+| 内联 SVC 扫描 | `tools/so.py svc` |
 | Dex2C 定位 native 实现 | `utils + scan_register_natives.js` → Ghidra 单函数逆向 |

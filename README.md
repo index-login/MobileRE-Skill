@@ -34,7 +34,7 @@
 | 🧩 **Dex2C/VMP 分析** | "这个加密是 native 的，帮我分析逻辑" | 定位 `so+offset`，hook 优先 / unidbg 复现 / Ghidra 伪代码 |
 | 🧬 **静态攻击面** | "帮我审计这个 App 的攻击面" | 从 Manifest 枚举 exported 组件/Provider/WebView，source→sink 追踪 |
 | 🧪 **安全合规测试** | "帮我检查这个 App 的安全合规" | 自动运行合规检测（注入/调试/WebView SSL/元数据），出具结果 |
-| 🧷 **SO 符号/结构恢复** | "这个 so 去符号了，帮我还原函数名和结构体" | 离线 ELF 侦察（`elfinfo`/`find_*`）→ Ghidra MCP 交叉引用推理 → 重命名 + 结构定义 |
+| 🧷 **SO 符号/结构恢复** | "这个 so 去符号了，帮我还原函数名和结构体" | 离线 SO 静态分析（`so.py` info/strings/strref/callers）→ Ghidra MCP 交叉引用推理 → 重命名 + 结构定义 |
 | 🦄 **离线模拟执行** | "不跑真机，帮我模拟这个 native 函数" | Unicorn 加载 .so，JNI/libc/syscall 打桩，直接跑目标函数拿结果 |
 
 > 所有操作由 AI 完成，你不需要手敲命令或运行脚本。
@@ -47,7 +47,7 @@
 
 - 🧠 **Agent 大脑**（`.kilo/agent/reverser.md`）— 逆向分析角色定义，按决策树自动选模块
 - 📚 **领域知识**（`references/` 项目级 wiki + `.kilo/skill/`）— 9 大技巧域手册（全量索引 `_index.md`）+ 动态分析总控 + Native 深度能力（符号/结构恢复、离线模拟执行、内存 DEX 脱壳）
-- 🔧 **能力单元**（`scripts/`）— 24 个 Frida 模块（monitors 15 + bypass 9）+ 26 个独立工具 + 检测清单
+- 🔧 **能力单元**（`scripts/`）— 24 个 Frida 模块（monitors 15 + bypass 9）+ 21 个独立工具 + 检测清单
 - 🛠️ **合规检测** — 注入、调试、WebView SSL、APK 元数据/签名
 - 🔌 **MCP 集成**（`kilo.json`）— jadx-mcp（Java 反编译）+ ghidra-mcp（二进制分析）
 
@@ -79,7 +79,7 @@
 │  utils/            — 内存 dump / 运行时 JS 工具             │
 ├────────────────────────────────────────────────────────────┤
 │               独立工具（项目根 tools/）                      │
-│  elfinfo · disasm · unpack · dex_* · frida_run · device_ui │
+│  so.py · unpack · dex_* · frida_run · device_ui             │
 │  emu_run · trace_recon · cipher_lab · fix_elf · 检测        │
 ├────────────────────────────────────────────────────────────┤
 │               MCP 集成（kilo.json 配置）                    │
@@ -136,11 +136,10 @@ MobileRE-Skill/
 │       ├── rev-dex-dumper/          # 运行时 DEX 脱壳（panda + mem，ptrace-free）
 │       └── karpathy-guidelines/     # 编码准则（开发辅助）
 ├── tools/                           # 独立工具（py/bat/jar，无 Frida 依赖）
-│   ├── elfinfo.py                   # ELF 侦察（段/依赖/导出入/重定位/vaddr↔offset）
-│   ├── disasm.py / find_strref.py / find_branch_callers.py   # 反汇编 / 字符串 / 调用者
+│   ├── so.py                        # SO 静态分析一站式（ELF 侦察/字符串/字节/反汇编/交叉引用/SVC/JNI 判型）
 │   ├── unpack.py                    # 一键脱壳入口
 │   ├── dex_rebuilder.py / dex_dedupe.py                      # DEX 修复 / 去重
-│   ├── fix_elf.py / fix_axml.py / scan_inline_svc.py / patch_gadget_threadnames.py
+│   ├── fix_elf.py / fix_axml.py / patch_gadget_threadnames.py
 │   ├── frida_run.py                 # 非交互 Frida 运行（无人值守）
 │   ├── device_ui.py                 # 设备交互（元素树/点击/输入/截图）
 │   ├── emu_run.py / uniharness.py   # Unicorn 离线仿真（含 --watch-* 观测层）
@@ -182,7 +181,9 @@ pip install -r requirements.txt
 | `unicorn` | CPU 模拟执行（SO 离线分析 / 模拟调试） |
 | `capstone` | 反汇编（模拟追踪/指令级调试） |
 | `keystone-engine` | 汇编（模拟打桩） |
-| `pyelftools` | ELF 解析（`elfinfo.py` 等工具） |
+| `pyelftools` | ELF 解析（`so.py` / `uniharness.py` 等） |
+| `lief` | ELF 改写（dump so 修复重建 / patch 常量 / 加节改 `DT_NEEDED`） |
+| `z3-solver` | 约束求解（从条件/结果反推输入；配 emu 观测层） |
 
 ### MCP 配套（让 AI 直接读源码/反汇编）
 

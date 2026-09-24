@@ -15,10 +15,10 @@ The upstream skill reads an IDA-NO-MCP export directory (`decompile/*.c` with `c
 
 | Data | Offline (no Ghidra instance) | Ghidra MCP |
 |------|------------------------------|------------|
-| Imports / exports / deps / relocs / segments / vaddr↔offset | `elfinfo.py <so> --json` | `ghidra_list_imports`, `ghidra_list_exports`, `ghidra_list_external_locations` |
-| Strings | `strings -a -t x <so>` | `ghidra_list_strings`, `ghidra_search_strings` |
-| String → code xrefs | `find_strref.py <so> <str_vaddr>` | `ghidra_get_xrefs_to` |
-| Callers of a function | `find_branch_callers.py <so> <func_vaddr>` | `ghidra_get_function_callers` |
+| Imports / exports / deps / relocs / segments / vaddr↔offset | `so.py info <so> --json` | `ghidra_list_imports`, `ghidra_list_exports`, `ghidra_list_external_locations` |
+| Strings | `strings -a -t x <so>` or `so.py strings <so>` | `ghidra_list_strings`, `ghidra_search_strings` |
+| String → code xrefs | `so.py strref <so> <str_vaddr>` | `ghidra_get_xrefs_to` |
+| Callers of a function | `so.py callers <so> <func_vaddr>` | `ghidra_get_function_callers` |
 | Callees of a function | read from the pseudocode | `ghidra_get_function_callees` |
 | Function pseudocode | — | `ghidra_decompile_function` |
 | Whole-.so export (upstream layout) | — | `ghidra_batch_decompile` + `ghidra_get_bulk_xrefs`, or a custom dump via `ghidra_run_ghidra_script` |
@@ -58,7 +58,7 @@ If you can identify a known algorithm through constants/structure, tell the user
 **Analyze Callees (called functions):**
 
 - Get the callee list with `ghidra_get_function_callees`, or read the calls from the pseudocode (`ghidra_decompile_function`).
-- Classify each callee against the import table — `ghidra_list_imports` / `ghidra_list_external_locations`, or `elfinfo.py` offline. A callee that resolves to an import (external location, `thunk_*`, undefined in .dynsym) is a library call; name it from the import symbol.
+- Classify each callee against the import table — `ghidra_list_imports` / `ghidra_list_external_locations`, or `so.py info` offline. A callee that resolves to an import (external location, `thunk_*`, undefined in .dynsym) is a library call; name it from the import symbol.
 - Recognize call patterns even when symbols are missing:
 
 **Paired function patterns (identify by matching call pairs):**
@@ -126,7 +126,7 @@ sub_YYY(dst, src, len);   // len used in memcpy
 
 **Analyze Callers (calling functions):**
 
-- Get the caller list with `ghidra_get_function_callers`, or `find_branch_callers.py` offline.
+- Get the caller list with `ghidra_get_function_callers`, or `so.py callers` offline.
 - A caller counts as *named* only when its symbol is not auto-generated (`FUN_` / `sub_` / `thunk_` / `LAB_` / `j_` prefix) — i.e. it comes from the export table or has already been renamed.
 - Bounded recursion: if the direct caller is unnamed, walk up its callers; stop at the first named caller or at depth 3. If nothing is named, fall back to internal characteristics (Step 1) and web search (Step 3).
 - Analyze how the return value is used by callers.
@@ -135,10 +135,10 @@ sub_YYY(dst, src, len);   // len used in memcpy
 
 Collect the following information:
 
-- Strings referenced by the function (`ghidra_get_xrefs_to` on the string address, or `find_strref.py` offline)
+- Strings referenced by the function (`ghidra_get_xrefs_to` on the string address, or `so.py strref` offline)
 - Magic Numbers / constants
-- Known imports in the call chain (`ghidra_list_imports`, or `elfinfo.py` offline)
-- Caller/callee symbol names (`ghidra_list_exports`, `elfinfo.py` exports, already-renamed functions)
+- Known imports in the call chain (`ghidra_list_imports`, or `so.py info` offline)
+- Caller/callee symbol names (`ghidra_list_exports`, `so.py info` exports, already-renamed functions)
 - Paired function patterns identified
 
 Based on collected information:

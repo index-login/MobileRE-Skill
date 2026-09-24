@@ -44,7 +44,7 @@ MobileRE-Skill/                    ← 工作目录（项目根）
 │   ├── api-reference.md             Frida API 参考
 │   └── articles.md                  参考文章索引
 ├── tools/                         ← 工具层：独立工具（py/bat/jar，无 Frida 依赖）
-│   ├── elfinfo.py / disasm.py         ELF 侦察 / 反汇编
+│   ├── so.py                        SO 静态分析（ELF 侦察/字符串/反汇编/交叉引用/SVC/JNI 判型）
 │   ├── unpack.py / dex_*.py         脱壳与 DEX 处理
 │   ├── frida_run.py / device_ui.py   非交互 Frida 运行 / 设备交互
 │   ├── emu_run.py / uniharness.py   离线仿真（rev-unicorn-debug）

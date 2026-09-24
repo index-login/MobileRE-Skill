@@ -2,7 +2,7 @@
 # uniharness.py — Unicorn arm64 模拟执行样板库
 #
 # 用途: 写 SO/代码片段模拟 harness 时复用样板：映射/栈/TLS/桩/JNI 表/调用/追踪/崩溃诊断。
-#       方法论见 rev-unicorn-debug SKILL.md；SO 侦察（raw 映射判定/依赖/重定位）用 elfinfo.py。
+#       方法论见 rev-unicorn-debug SKILL.md；SO 侦察（raw 映射判定/依赖/重定位）用 so.py info。
 # 用法:
 #   from uniharness import Harness, asm, JNI_SLOTS
 #   h = Harness(trace=False)
@@ -218,12 +218,14 @@ class Harness:
 
     # ---------- 诊断 / 追踪 ----------
     def fault(self, e=None):
-        """打印崩溃现场（pc/关键寄存器），返回描述字符串。"""
+        """打印崩溃现场（pc/关键寄存器），返回描述字符串（同一现场只打印一次）。"""
         vals = [self.uc.reg_read(r) for r in (UC_ARM64_REG_PC, UC_ARM64_REG_X0,
                                               UC_ARM64_REG_X1, UC_ARM64_REG_SP, UC_ARM64_REG_LR)]
         msg = "[fault] %s | pc=%#x x0=%#x x1=%#x sp=%#x lr=%#x" % (
             e, vals[0], vals[1], vals[2], vals[3], vals[4])
-        print(msg)
+        if msg != getattr(self, "_last_fault_msg", None):
+            print(msg)
+        self._last_fault_msg = msg
         return msg
 
     def _count_hook(self, uc, addr, size, user):

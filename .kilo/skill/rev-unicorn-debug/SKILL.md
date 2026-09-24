@@ -35,7 +35,7 @@ r = h.call(0x196C, args=[env, 0])           # run until ret; r.x0, r.insns
 
 Helpers: `map` / `map_raw` / `map_elf` / `alloc` / `setup_stack` / `setup_tls` / `stub` (accepts `code=` from `asm()`) / `hook` / `jni_env` / `call` / `run` / `fault`. Self-test: `python3 uniharness.py`.
 
-Recon before writing a harness (raw-map check / deps / exports / relocs): `tools/elfinfo.py`.
+Recon before writing a harness (raw-map check / deps / exports / relocs): `tools/so.py info`.
 Dependencies: see repo root `requirements.txt` (unicorn, capstone, keystone-engine, pyelftools).
 
 ## CLI runner (tools/emu_run.py)
@@ -46,7 +46,7 @@ One-shot emulation without writing a harness:
 python3 tools/emu_run.py libfoo.so --sym Java_pkg_Cls_method --jni --args "env,0,'text'" --poke 0x1300c:1=1 --read 0x1000:32
 ```
 
-Options: `--off 0x..` (address instead of symbol), `--imp` (extra import stubs), `--trace`, `--timeout`, `--raw`, `--setup hooks.py` (full `Harness` access).
+Options: `--off 0x..` (address instead of symbol), `--imp` (extra import stubs), `--trace`, `--timeout`, `--raw`, `--setup hooks.py` (full `Harness` access), `--stub name=val` (override an import stub's return, e.g. `getpid=1234`), `--log-jni` (log every JNI call: `[jni] name(args) -> ret`, string/array args decoded), `--dump-jni-out FILE` (append NewStringUTF / SetByteArrayRegion payloads), `--trace-stubs` (log every stub hit: `[stub] name(args) -> ret`; both logs aggregate beyond `--watch-max`).
 
 Observability layer (white-box / VM / algorithm work): `--watch-code PC --watch-regs x0,x1 --watch-buf "x19+0x61f0:16"`, `--watch-read/--watch-write lo-hi` (auto-aggregated beyond `--watch-max`), `--scan hex[,hex] [--scan-at PC]`. Pair with `tools/trace_recon.py` (event log -> buffer state sequence) and `tools/cipher_lab.py` (layer/table/schedule adjudication).
 

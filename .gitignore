@@ -35,3 +35,6 @@ kilo.json
 
 # 反馈日志（本地保留，不入库；覆盖 skill 内嵌套路径）
 **/feedback/FEEDBACK.md
+
+# 冒烟测试用例（本地保留，不入库）
+references/smoke-test.md

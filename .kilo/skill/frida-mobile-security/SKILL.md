@@ -1,6 +1,6 @@
 ---
 name: frida-mobile-security
-description: 用于 Android/iOS 移动应用安全逆向分析：Frida 动态插桩、绕过反调试/反注入/加固壳、脱壳、加密与 native SO 层 hook、运行时行为分析、jadx-mcp 静态攻击面分析。内置工具链：一键脱壳 unpack.py、ELF 侦察 elfinfo.py、非交互 Frida 运行 frida_run.py、快速反汇编 disasm.py、监控/绕过模块、独立检测工具（注入/调试/签名）。用户提到"绕过检测/闪退/脱壳/加密/抓包/行为摸底/内存扫描/分析 so/ELF 侦察/快速反汇编/检查证书"等意图时使用。
+description: 用于 Android/iOS 移动应用安全逆向分析：Frida 动态插桩、绕过反调试/反注入/加固壳、脱壳、加密与 native SO 层 hook、运行时行为分析、jadx-mcp 静态攻击面分析、离线 SO 静态分析（ELF 侦察/字符串/交叉引用/反汇编/JNI 判型）。用户提到"绕过检测/闪退/脱壳/加密/抓包/行为摸底/内存扫描/分析 so/ELF 侦察/快速反汇编/JNI/检查证书"等意图时使用。
 ---
 
 # Frida Mobile Security — 逆向分析总控
@@ -174,18 +174,12 @@ adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev
 | `unpack.py` | **脱壳一键入口**（线性流水线：回填+补充+自动pull+fix-checksum+去重+方法体标记） | unpacking |
 | `dex_rebuilder.py` | ① `--fix-checksum` 重算 checksum（默认操作）② CodeItem 离线重组回填 | unpacking |
 | `dex_dedupe.py` | 产物去重/校验 | unpacking |
-| `find_strref.py` | 字符串引用定位 | native-analysis |
-| `find_branch_callers.py` | 交叉引用/调用者定位 | native-analysis |
-| `elfinfo.py` | ELF 侦察（段/依赖/导出/导入/重定位/vaddr↔offset，模拟 harness 前置） | native-analysis |
 | `fix_elf.py` | 修复 ELF header | unpacking |
 | `fix_axml.py` | 修复爱加密魔改 AXML（Manifest 多 4 字节填充+headerSize 谎报 0x000C，jadx/apktool 无法解析时用） | static-analysis |
 | `patch_gadget_threadnames.py` | patch gadget 线程名 | native-analysis |
-| `scan_inline_svc.py` | 扫描内联 SVC 指令 | native-analysis |
 | `frida_run.py` | **非交互 Frida 运行器**（spawn/attach → 加载 → 观察 N 秒 → 存活报告 → detach；`-l` 支持 skill 内相对路径；`-e @cfg.js` 注入 CONFIG_OVERRIDE） | native-analysis |
 | `device_ui.py` | 设备交互（text/tap/swipe/key/shot/logs/launch/clear/foreground/size） | behavior-analysis |
-| `disasm.py` | 快速反汇编（capstone，按 symbol/vaddr；Ghidra 未启动时的 fallback） | native-analysis |
-| `jni_sig.py` | JNI 导出签名侦察（JNI 调用点清单 + Java 第 1 参类型推断：jstring/jbyteArray/…，hook native 前置） | native-analysis |
-| `emu_run.py` / `uniharness.py` | 离线仿真（rev-unicorn-debug）：单函数模拟 / JNI·libc 打桩基座；emu_run 内置观测层（`--watch-code/--watch-regs/--watch-buf/--watch-read/--watch-write/--scan`，超限自动聚合） | native-analysis |
+| `emu_run.py` / `uniharness.py` | 离线仿真（rev-unicorn-debug）：单函数模拟 / JNI·libc 打桩基座；emu_run 内置观测层（`--watch-code/--watch-regs/--watch-buf/--watch-read/--watch-write/--scan`，超限自动聚合）与 JNI/桩日志（`--log-jni/--trace-stubs/--stub/--dump-jni-out`） | native-analysis |
 | `trace_recon.py` | 仿真 trace 状态重建：观测日志 → 缓冲状态序列（COPY/PASS 自动分段） | native-analysis |
 | `cipher_lab.py` | 密码结构判定器：`layers` 层写法双轨迹判定 / `table` 白盒表反推 / `schedule` 编排归因（出主密钥） | native-analysis |
 

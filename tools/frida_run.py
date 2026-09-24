@@ -147,6 +147,10 @@ def create_script(session, src, runtime=""):
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
     ap = argparse.ArgumentParser()
     ap.add_argument("-H", "--host", help="remote frida-server host:port")
     ap.add_argument("-U", "--usb", action="store_true", help="use USB device")
