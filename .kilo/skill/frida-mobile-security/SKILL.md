@@ -183,7 +183,8 @@ adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev
 | `patch_gadget_threadnames.py` | patch gadget 线程名 | native-analysis |
 | `frida_run.py` | **非交互 Frida 运行器**（spawn/attach → 加载 → 观察 N 秒 → 存活报告 → detach；`-l` 支持 skill 内相对路径；`-e @cfg.js` 注入 CONFIG_OVERRIDE） | native-analysis |
 | `device_ui.py` | 设备交互（text/tap/swipe/key/shot/logs/launch/clear/foreground/size） | behavior-analysis |
-| `emu_run.py` / `uniharness.py` | 离线仿真（rev-unicorn-debug）：单函数模拟 / JNI·libc 打桩基座；emu_run 内置观测层（`--watch-code/--watch-regs/--watch-buf/--watch-read/--watch-write/--scan`，超限自动聚合）与 JNI/桩日志（`--log-jni/--trace-stubs/--stub/--dump-jni-out`） | native-analysis |
+| `emu_run.py` / `uniharness.py` | 离线仿真（rev-unicorn-debug）：单函数模拟 / JNI·libc 打桩基座。**加载即自动**：重定位分流（函数/数据导入）、`DT_INIT_ARRAY`、syscall 层（`svc #0` 兜底）、内置 `mem*/str*/calloc/pthread/ptrace/fopen/…` 桩；未桩导入首次命中打印 `[!] unstubbed`。观测层（`--watch-*/--scan`）与 JNI/桩日志（`--log-jni/--trace-stubs/--stub/--dump-jni-out`）；复杂调用走 `--setup`（`--ret-str`/`--out-arg`/`--no-init`/`--no-syscalls`） | native-analysis |
+| `emu_setup.py` | **emu_run 的通用 setup 助手库**：`std_string/std_vector/call_sret/read_std_string/install_stub/patch_data_import/ctype_table/cstr`——复杂函数（C++ 对象入参/出参、覆盖 GOT 桩）少写样板 | native-analysis |
 | `trace_recon.py` | 仿真 trace 状态重建：观测日志 → 缓冲状态序列（COPY/PASS 自动分段） | native-analysis |
 | `fsmon_run.py` | **设备侧内核文件事件采集与分析**（`capture`/`diff`/`compare`/`summary`；流式、读风暴自动降噪、写活动视图、敏感路径检测画像、落盘件 pull+分类）。不注入/跨进程/无内容（内容走 Frida）；Frida 上不去时的兜底观察。需 root；设备侧 fsmon 二进制缺件自装（nowsecure/fsmon Release） | behavior-analysis |
 | `cipher_lab.py` | 密码结构判定器：`layers` 层写法双轨迹判定 / `table` 白盒表反推 / `schedule` 编排归因（出主密钥） | native-analysis |

@@ -209,7 +209,8 @@ Ghidra MCP 支持反编译 + 调试（`ghidra_*` 工具），用于分析 so 的
 | `tools/so.py callers` | 定位函数调用者（BL / B / B.cond / CBZ / TBZ，可 `--bl-only`） |
 | `tools/so.py disasm` | 快速反汇编（按 symbol/vaddr，capstone；Ghidra 未启动时的 fallback，`--grep` 过滤） |
 | `tools/so.py jni` | JNI 导出签名侦察（JNI 调用点清单 + Java 第 1 参类型推断：jstring/jbyteArray/…） |
-| `tools/emu_run.py` | 单函数离线仿真（Unicorn）；内置观测层 `--watch-code/--watch-regs/--watch-buf/--watch-read/--watch-write/--scan`（超限自动聚合，防日志爆炸）；JNI/桩日志 `--log-jni/--trace-stubs/--stub name=val/--dump-jni-out FILE` |
+| `tools/emu_run.py` | 单函数离线仿真（Unicorn）。**加载即自动**：重定位分流（函数/数据导入）、`DT_INIT_ARRAY`、syscall 层（`svc #0` 兜底）、内置 `mem*/str*/calloc/pthread/ptrace/fopen/…` 桩；未桩导入打印 `[!] unstubbed`。观测 `--watch-*/--scan`（超限聚合）；日志 `--log-jni/--trace-stubs/--stub/--dump-jni-out`；复杂调用 `--setup` + `--ret-str/--out-arg/--no-init/--no-syscalls`（见 §3.6） |
+| `tools/emu_setup.py` | emu_run 的 setup 助手库：`std_string/std_vector/call_sret/read_std_string/install_stub/patch_data_import/ctype_table/cstr`（见 §3.6） |
 | `tools/trace_recon.py` | 仿真 trace 状态重建：观测日志 → 缓冲状态序列（COPY/PASS 自动分段，支持 `--json`） |
 | `tools/cipher_lab.py` | 密码结构判定器：`layers`（层写法双轨迹判定）/ `table`（白盒表 S(Y⊕k)⊕c 反推）/ `schedule`（轮密钥→标准 AES-128 编排归因，出主密钥） |
 | `tools/so.py svc` | 扫描内联 SVC 指令（检测代码特征） |
@@ -272,6 +273,28 @@ info/strings 发现 → strref 引用 → disasm 上下文 → jni hook 前置 �
 | `find_branch_callers.py <so> <a>` | `so.py callers <so> <a>` |
 | `scan_inline_svc.py <so>` | `so.py svc <so>` |
 | `jni_sig.py <so> …` | `so.py jni <so> …` |
+
+### 3.6 复杂函数离线仿真（emu_run 广度 + setup 助手）
+
+设计目标：**广度优先**——尽量能模拟任意 so 函数；极难/需完整运行时的才升级 unidbg（深度），动态验证仍可走 Frida。
+
+**加载即自动处理**（无需 setup）：重定位分流（`JUMP_SLOT`→函数桩 / `GLOB_DAT`→数据单元，内置 `_ctype_` 表）、`DT_INIT_ARRAY`（C++ 全局对象）、syscall 层（`svc #0` → 常用 syscall 假实现）、内置 libc 桩（`mem*/str*/calloc/realloc/sprintf/pthread_*/ptrace/fopen/…`）。未桩导入首次命中打印 `[!] unstubbed: <name> -> 0`（避免静默 ret 0）。
+
+**复杂调用**用 `--setup hooks.py`（拿 Harness 全权）+ `tools/emu_setup.py` 助手库：
+
+```python
+# hooks.py —— 复杂函数（C++ 对象入参/出参、覆盖 GOT 桩）
+import emu_setup as E
+def setup(h):
+    s = E.std_string(h, b"aGVo...")        # libc++ std::string 入参
+    print(E.call_sret(h, 0x22168, [s]))     # sret(x8) 返回 std::string
+    E.install_stub(h, 0x4F6A8, my_memmove)  # 覆盖某 GOT 槽的桩
+```
+
+- CLI 便捷项：`--ret-str`（sret 返回 `std::string` 自动解码）、`--out-arg N:LEN`（调用后 dump 第 N 参指向缓冲）、`--no-init` / `--no-syscalls`（关自动项）
+- JNI 字节数组：`h.jni_array_lens[ptr] = n`（供 `GetArrayLength`；`NewByteArray` 自动登记）
+- 坑：`--setup` 脚本有 `__file__`，但 `import emu_run` 会得到**第二模块实例**（主程序以 `__main__` 运行）→ 不要依赖 emu_run 模块全局，用 Harness 属性（如 `h.jni_array_lens`）
+- **升级线**：需真 linker / 真 syscall / 线程 / Java VM 语义 → unidbg；动态调试 → Frida
 
 ---
 

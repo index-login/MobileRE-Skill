@@ -2,7 +2,9 @@
 """emu_run.py — 单函数离线仿真（Unicorn，基于 uniharness.py）。
 
 用途：不碰真机，调用 .so 内指定函数并取回返回值；内置 JNIEnv 与常见 libc 导入桩，
-可复算算法（如 crackme 校验函数）。
+可复算算法（如 crackme 校验函数）。加载时自动：① 按 ELF 重定位类型区分函数导入(JUMP_SLOT,
+给代码桩)与数据导入(GLOB_DAT, 给可写数据, 如 _ctype_ 内置表)；② 执行 DT_INIT/DT_INIT_ARRAY
+初始化 C++ 全局对象。内置内存/字符串桩：memcpy/memmove/memset/memchr/str*/atoi/strtol。
 
 用法:
   python3 emu_run.py <so> --sym <symbol> [选项]
@@ -19,7 +21,12 @@
   --poke 0x15054:4=2                调用前写内存（可重复）
   --read 0x1000:32                  调用后读内存（hex+ascii，可重复）
   --trace / --timeout 10 / --raw    指令追踪 / 秒 / raw 映射（vaddr==offset 的 dump so）
-  --setup hooks.py                  自定义脚本：def setup(h): ...（拿到 Harness 全权）
+  --no-init                         不执行 DT_INIT/DT_INIT_ARRAY（默认执行）
+  --no-syscalls                     不装 syscall 层（默认装：svc #0 兜底，避免直接崩）
+  --ret-str                         按 sret(x8) 调用并解码返回的 std::string
+  --out-arg N:LEN                   调用后 dump 第 N 个实参指向的缓冲（可重复）
+  --setup hooks.py                  自定义脚本：def setup(h): ...（拿到 Harness 全权；
+                                    复杂函数用 `import emu_setup as E` 的助手，见 tools/emu_setup.py）
 
 观测层（白盒/VM/算法分析用；日志解析见 tools/trace_recon.py）:
   --watch-code 0x10f9dc             命中 PC（逗号分隔）时打印寄存器/缓冲（可重复）
@@ -85,13 +92,20 @@ def jni_name(idx):
 
 
 def _read_cstr_uc(uc, ptr, limit=512):
+    """读 C 串：分小块读，容忍末尾落在未映射页（整块 mem_read 会失败）。"""
     if not ptr:
         return ""
-    try:
-        data = bytes(uc.mem_read(ptr, limit))
-    except Exception:  # noqa: BLE001
-        return ""
-    return data.split(b"\x00", 1)[0].decode("utf-8", "replace")
+    out = bytearray()
+    while len(out) < limit:
+        try:
+            chunk = bytes(uc.mem_read(ptr + len(out), min(16, limit - len(out))))
+        except Exception:  # noqa: BLE001
+            break
+        out += chunk
+        z = out.find(b"\x00")
+        if z >= 0:
+            return out[:z].decode("utf-8", "replace")
+    return out.decode("utf-8", "replace")
 
 
 def _escape_jni(s, limit=200):
@@ -224,6 +238,21 @@ def make_libc_stubs(h, extra, overrides=None, tracer=None):
         except Exception:  # noqa: BLE001
             return b""
 
+    def read_cstr(addr, limit=65536):
+        """读 C 串：分小块，遇 NUL 或未映射页即停。
+        固定大块 mem_read 会因字符串靠近映射边界而整体失败（→ 误判长度 0）。"""
+        out = bytearray()
+        while len(out) < limit:
+            try:
+                chunk = bytes(h.uc.mem_read(addr + len(out), min(16, limit - len(out))))
+            except Exception:  # noqa: BLE001
+                break
+            z = chunk.find(b"\x00")
+            if z >= 0:
+                return bytes(out) + chunk[:z]
+            out += chunk
+        return bytes(out)
+
     def reg(name):
         from unicorn.arm64_const import (
             UC_ARM64_REG_X0, UC_ARM64_REG_X1, UC_ARM64_REG_X2, UC_ARM64_REG_X3)
@@ -242,8 +271,8 @@ def make_libc_stubs(h, extra, overrides=None, tracer=None):
 
     def cb_strcmp(uc, addr, size, user):
         a, b = uc.reg_read(reg("x0")), uc.reg_read(reg("x1"))
-        pa = read_mem(a, 4096).split(b"\x00", 1)[0]
-        pb = read_mem(b, 4096).split(b"\x00", 1)[0]
+        pa = read_cstr(a)
+        pb = read_cstr(b)
         uc.reg_write(reg("x0"), (0 if pa == pb else (pa[0] - pb[0]) if pa and pb else 1) & 0xFFFFFFFF)
 
     def cb_memcmp(uc, addr, size, user):
@@ -257,8 +286,7 @@ def make_libc_stubs(h, extra, overrides=None, tracer=None):
         uc.reg_write(reg("x0"), r & 0xFFFFFFFF)
 
     def cb_strlen(uc, addr, size, user):
-        s = read_mem(uc.reg_read(reg("x0")), 4096).split(b"\x00", 1)[0]
-        uc.reg_write(reg("x0"), len(s))
+        uc.reg_write(reg("x0"), len(read_cstr(uc.reg_read(reg("x0")))))
 
     def cb_malloc(uc, addr, size, user):
         uc.reg_write(reg("x0"), h.alloc(max(1, uc.reg_read(reg("x0")))))
@@ -266,19 +294,298 @@ def make_libc_stubs(h, extra, overrides=None, tracer=None):
     def cb_free(uc, addr, size, user):
         pass
 
+    def cb_memcpy(uc, addr, size, user):
+        d, s, n = (uc.reg_read(reg("x0")), uc.reg_read(reg("x1")), uc.reg_read(reg("x2")))
+        if n:
+            uc.mem_write(d, read_mem(s, n))
+
+    cb_memmove = cb_memcpy
+
+    def cb_memset(uc, addr, size, user):
+        d, v, n = (uc.reg_read(reg("x0")), uc.reg_read(reg("x1")) & 0xFF, uc.reg_read(reg("x2")))
+        if n:
+            uc.mem_write(d, bytes([v]) * n)
+
+    def cb_memchr(uc, addr, size, user):
+        s, v, n = (uc.reg_read(reg("x0")), uc.reg_read(reg("x1")) & 0xFF, uc.reg_read(reg("x2")))
+        i = read_mem(s, n).find(bytes([v]))
+        uc.reg_write(reg("x0"), s + i if i >= 0 else 0)
+
+    def _cstr(addr):
+        return read_cstr(addr)
+
+    def cb_strcpy(uc, addr, size, user):
+        uc.mem_write(uc.reg_read(reg("x0")), _cstr(uc.reg_read(reg("x1"))) + b"\x00")
+
+    def cb_strncpy(uc, addr, size, user):
+        d, n = uc.reg_read(reg("x0")), uc.reg_read(reg("x2"))
+        s = _cstr(uc.reg_read(reg("x1")))[:n]
+        uc.mem_write(d, s + b"\x00" * (n - len(s)))
+
+    def cb_strcat(uc, addr, size, user):
+        d = uc.reg_read(reg("x0"))
+        uc.mem_write(d, _cstr(d) + _cstr(uc.reg_read(reg("x1"))) + b"\x00")
+
+    def cb_strchr(uc, addr, size, user):
+        s, c = uc.reg_read(reg("x0")), uc.reg_read(reg("x1")) & 0xFF
+        i = _cstr(s).find(bytes([c]))
+        uc.reg_write(reg("x0"), s + i if i >= 0 else 0)
+
+    def cb_strrchr(uc, addr, size, user):
+        s, c = uc.reg_read(reg("x0")), uc.reg_read(reg("x1")) & 0xFF
+        i = _cstr(s).rfind(bytes([c]))
+        uc.reg_write(reg("x0"), s + i if i >= 0 else 0)
+
+    def cb_strstr(uc, addr, size, user):
+        s = uc.reg_read(reg("x0"))
+        needle = _cstr(uc.reg_read(reg("x1")))
+        i = _cstr(s).find(needle) if needle else 0
+        uc.reg_write(reg("x0"), s + i if i >= 0 else 0)
+
+    def cb_strnlen(uc, addr, size, user):
+        s, n = uc.reg_read(reg("x0")), uc.reg_read(reg("x1"))
+        z = read_mem(s, n).find(b"\x00")
+        uc.reg_write(reg("x0"), z if z >= 0 else n)
+
+    def cb_atoi(uc, addr, size, user):
+        m = re.match(r"\s*([+-]?[0-9]+)", _cstr(uc.reg_read(reg("x0"))).decode("latin1"))
+        uc.reg_write(reg("x0"), (int(m.group(1)) if m else 0) & 0xFFFFFFFF)
+
+    def cb_strtol(uc, addr, size, user):
+        p = uc.reg_read(reg("x0"))
+        base = uc.reg_read(reg("x2")) or 10
+        m = re.match(r"\s*([+-]?(?:0[xX][0-9a-fA-F]+|[0-9]+))", _cstr(p).decode("latin1"))
+        v, consumed = 0, 0
+        if m:
+            try:
+                v = int(m.group(1), 0) if base == 0 else int(m.group(1), base)
+            except ValueError:
+                v = 0
+            consumed = m.end()
+        endp = uc.reg_read(reg("x1"))
+        if endp:
+            uc.mem_write(endp, struct.pack("<Q", p + consumed))
+        uc.reg_write(reg("x0"), v & 0xFFFFFFFFFFFFFFFF)
+
+    def _regi(i):
+        from unicorn.arm64_const import (
+            UC_ARM64_REG_X0, UC_ARM64_REG_X1, UC_ARM64_REG_X2, UC_ARM64_REG_X3,
+            UC_ARM64_REG_X4, UC_ARM64_REG_X5, UC_ARM64_REG_X6, UC_ARM64_REG_X7)
+        return (UC_ARM64_REG_X0, UC_ARM64_REG_X1, UC_ARM64_REG_X2, UC_ARM64_REG_X3,
+                UC_ARM64_REG_X4, UC_ARM64_REG_X5, UC_ARM64_REG_X6, UC_ARM64_REG_X7)[i]
+
+    def cb_calloc(uc, addr, size, user):
+        n = (uc.reg_read(reg("x0")) & 0xFFFFFFFF) * (uc.reg_read(reg("x1")) & 0xFFFFFFFF)
+        uc.reg_write(reg("x0"), h.alloc(max(1, n)))          # h.alloc 为零初始化
+
+    def cb_realloc(uc, addr, size, user):
+        old, n = uc.reg_read(reg("x0")), uc.reg_read(reg("x1"))
+        p = h.alloc(max(1, n))
+        if old and n:
+            try:
+                uc.mem_write(p, bytes(uc.mem_read(old, n)))
+            except Exception:  # noqa: BLE001
+                pass
+        uc.reg_write(reg("x0"), p)
+
+    def cb_usable_size(uc, addr, size, user):
+        uc.reg_write(reg("x0"), 0x1000)
+
+    def cb_posix_memalign(uc, addr, size, user):
+        memptr, sz = uc.reg_read(reg("x0")), uc.reg_read(reg("x2"))
+        p = h.alloc(max(1, sz))
+        if memptr:
+            uc.mem_write(memptr, struct.pack("<Q", p))
+        uc.reg_write(reg("x0"), 0)
+
+    def cb_alloc_exc(uc, addr, size, user):
+        uc.reg_write(reg("x0"), h.alloc(max(1, uc.reg_read(reg("x0")))))
+
+    def cb_ret0(uc, addr, size, user):
+        uc.reg_write(reg("x0"), 0)
+
+    def cb_ret1(uc, addr, size, user):
+        uc.reg_write(reg("x0"), 1)
+
+    def cb_strtoul(uc, addr, size, user):
+        p = uc.reg_read(reg("x0"))
+        base = uc.reg_read(reg("x2")) or 10
+        m = re.match(r"\s*([+-]?(?:0[xX][0-9a-fA-F]+|[0-9]+))", read_cstr(p).decode("latin1"))
+        v, consumed = 0, 0
+        if m:
+            try:
+                v = int(m.group(1), 0) if base == 0 else int(m.group(1), base)
+            except ValueError:
+                v = 0
+            consumed = m.end()
+        endp = uc.reg_read(reg("x1"))
+        if endp:
+            uc.mem_write(endp, struct.pack("<Q", p + consumed))
+        uc.reg_write(reg("x0"), v & 0xFFFFFFFFFFFFFFFF)
+
+    def cb_strtod(uc, addr, size, user):
+        from unicorn.arm64_const import UC_ARM64_REG_D0
+        p = uc.reg_read(reg("x0"))
+        m = re.match(r"\s*([+-]?(?:[0-9]*\.[0-9]+|[0-9]+)(?:[eE][+-]?[0-9]+)?)", read_cstr(p).decode("latin1"))
+        val, consumed = 0.0, 0
+        if m:
+            try:
+                val = float(m.group(1))
+            except ValueError:
+                val = 0.0
+            consumed = m.end()
+        endp = uc.reg_read(reg("x1"))
+        if endp:
+            uc.mem_write(endp, struct.pack("<Q", p + consumed))
+        uc.reg_write(UC_ARM64_REG_D0, struct.unpack("<Q", struct.pack("<d", val))[0])
+
+    def _printf(uc, fmtp, arg_start, out_limit):
+        from unicorn.arm64_const import UC_ARM64_REG_SP
+        fmt = read_cstr(fmtp).decode("latin1")
+        sp = uc.reg_read(UC_ARM64_REG_SP)
+        idx = [0]
+
+        def nxt():
+            r = arg_start + idx[0]
+            idx[0] += 1
+            if r < 8:
+                return uc.reg_read(_regi(r))
+            return struct.unpack("<Q", bytes(uc.mem_read(sp + 8 * (r - 8), 8)))[0]
+
+        out, i, n = [], 0, len(fmt)
+        while i < n:
+            if fmt[i] != "%":
+                out.append(fmt[i]); i += 1; continue
+            i += 1
+            if i < n and fmt[i] == "%":
+                out.append("%"); i += 1; continue
+            while i < n and fmt[i] in "-+ #0.0123456789":
+                i += 1
+            if i >= n:
+                break
+            conv = fmt[i]; i += 1
+            if conv == "l":
+                if i < n:
+                    conv = fmt[i].lower(); i += 1
+                v = nxt()
+                if conv in "di":
+                    out.append(str(v - (1 << 64) if v >> 63 else v))
+                elif conv == "u":
+                    out.append(str(v & 0xFFFFFFFFFFFFFFFF))
+                elif conv == "x":
+                    out.append("%x" % (v & 0xFFFFFFFFFFFFFFFF))
+                continue
+            v = nxt()
+            if conv in "di":
+                sv = v & 0xFFFFFFFF
+                out.append(str(sv - (1 << 32) if sv >> 31 else sv))
+            elif conv == "u":
+                out.append(str(v & 0xFFFFFFFF))
+            elif conv in "xX":
+                out.append("%x" % (v & 0xFFFFFFFF))
+            elif conv == "p":
+                out.append("0x%x" % v)
+            elif conv == "s":
+                out.append(read_cstr(v).decode("latin1", "replace"))
+            elif conv == "c":
+                out.append(chr(v & 0xFF))
+        s = "".join(out).encode("latin1", "replace")
+        return s[:max(0, out_limit - 1)] if out_limit is not None else s
+
+    def cb_sprintf(uc, addr, size, user):
+        dst = uc.reg_read(reg("x0"))
+        s = _printf(uc, uc.reg_read(reg("x1")), 2, None)
+        uc.mem_write(dst, s + b"\x00")
+        uc.reg_write(reg("x0"), len(s))
+
+    def cb_snprintf(uc, addr, size, user):
+        dst, lim = uc.reg_read(reg("x0")), uc.reg_read(reg("x1"))
+        s = _printf(uc, uc.reg_read(reg("x2")), 3, lim if lim else None)
+        if dst and lim:
+            uc.mem_write(dst, s + b"\x00")
+        uc.reg_write(reg("x0"), len(s))
+
+    _rng = [0x12345678]
+
+    def cb_rand(uc, addr, size, user):
+        _rng[0] = (1103515245 * _rng[0] + 12345) & 0x7FFFFFFF
+        uc.reg_write(reg("x0"), (_rng[0] >> 16) & 0x7FFF)
+
+    def cb_srand(uc, addr, size, user):
+        _rng[0] = uc.reg_read(reg("x0")) & 0x7FFFFFFF
+
+    def cb_fopen(uc, addr, size, user):
+        uc.reg_write(reg("x0"), h.alloc(8))          # 假 FILE*
+
+    def cb_fgets(uc, addr, size, user):
+        uc.reg_write(reg("x0"), 0)                   # EOF
+
+    def cb_getppid(uc, addr, size, user):
+        uc.reg_write(reg("x0"), 1)
+
+    def cb_waitpid(uc, addr, size, user):
+        uc.reg_write(reg("x0"), 0xFFFFFFFFFFFFFFFF)
+
+    def cb_ptrace(uc, addr, size, user):
+        uc.reg_write(reg("x0"), 0)                   # 假装成功/未被跟踪
+
+    def cb_gettimeofday(uc, addr, size, user):
+        tv = uc.reg_read(reg("x0"))
+        if tv:
+            uc.mem_write(tv, b"\x00" * 16)
+        uc.reg_write(reg("x0"), 0)
+
+    def _noop(uc, addr, size, user):
+        pass
+
+    _warned = set()
+
+    def _unknown_for(name):
+        def cb(uc, addr, size, user):
+            if name not in _warned:
+                _warned.add(name)
+                print("[!] unstubbed (--imp): %s -> 0" % name, flush=True)
+            uc.reg_write(reg("x0"), 0)
+        return cb
+
     builtins = {
-        "strncmp": cb_strncmp, "strcmp": cb_strcmp, "memcmp": cb_memcmp,
-        "strlen": cb_strlen, "malloc": cb_malloc, "free": cb_free,
-        "__stack_chk_fail": None, "abort": None,
+        "strncmp": cb_strncmp, "strcmp": cb_strcmp, "memcmp": cb_memcmp, "strlen": cb_strlen,
+        "memcpy": cb_memcpy, "memmove": cb_memmove, "memset": cb_memset, "memchr": cb_memchr,
+        "strcpy": cb_strcpy, "strncpy": cb_strncpy, "strcat": cb_strcat,
+        "strchr": cb_strchr, "strrchr": cb_strrchr, "strstr": cb_strstr, "strnlen": cb_strnlen,
+        "atoi": cb_atoi, "strtol": cb_strtol, "strtoul": cb_strtoul, "strtoull": cb_strtoul,
+        "strtod": cb_strtod, "sprintf": cb_sprintf, "snprintf": cb_snprintf,
+        "malloc": cb_malloc, "free": cb_free, "calloc": cb_calloc, "realloc": cb_realloc,
+        "malloc_usable_size": cb_usable_size, "posix_memalign": cb_posix_memalign,
+        "aligned_alloc": cb_usable_size,
+        "__cxa_guard_acquire": cb_ret1, "__cxa_guard_release": cb_ret0,
+        "__cxa_atexit": cb_ret0, "__register_atfork": cb_ret0,
+        "__cxa_allocate_exception": cb_alloc_exc, "__cxa_begin_catch": cb_ret0,
+        "pthread_mutex_lock": cb_ret0, "pthread_mutex_unlock": cb_ret0,
+        "pthread_mutex_init": cb_ret0, "pthread_mutex_destroy": cb_ret0,
+        "pthread_once": cb_ret0, "pthread_self": cb_ret1,
+        "pthread_key_create": cb_ret0, "pthread_setspecific": cb_ret0,
+        "getenv": cb_ret0, "__errno": cb_ret0,
+        "dlopen": cb_ret1, "dlclose": cb_ret0, "dlsym": cb_ret0, "dlerror": cb_ret0,
+        "__android_log_print": cb_ret0, "__android_log_write": cb_ret0,
+        "fopen": cb_fopen, "fgets": cb_fgets, "fclose": cb_ret0, "fread": cb_ret0,
+        "fwrite": cb_ret0, "getppid": cb_getppid, "getpid": cb_getppid, "waitpid": cb_waitpid,
+        "ptrace": cb_ptrace, "raise": cb_ret0, "usleep": cb_ret0, "sleep": cb_ret0,
+        "nanosleep": cb_ret0, "pthread_create": cb_ret0, "pthread_join": cb_ret0,
+        "pthread_exit": cb_ret0, "pthread_detach": cb_ret0,
+        "rand": cb_rand, "srand": cb_srand, "gettimeofday": cb_gettimeofday,
+        "__stack_chk_fail": _noop, "abort": _noop, "__cxa_finalize": _noop,
+        "__cxa_free_exception": _noop, "__cxa_end_catch": _noop, "__cxa_rethrow": _noop,
     }
-    unknown = lambda uc, addr, size, user: uc.reg_write(reg("x0"), 0)  # noqa: E731
     result = {}
     names = set(extra) | set(builtins) | set(overrides)
     for name in names:
         if name in overrides:
             cb = cb_override(overrides[name])
+        elif name in builtins:
+            cb = builtins[name]
         else:
-            cb = builtins.get(name, unknown) or (lambda uc, a, s, u: None)
+            cb = _unknown_for(name)
         if tracer is not None:
             cb = tracer.wrap(name, cb)
         result[name] = cb
@@ -299,15 +606,49 @@ def find_symbol(path, name):
     return None
 
 
+def _ctype_cell(h):
+    """为 _ctype_ 数据导入分配一个"指向 ctype 表"的变量单元，返回该单元地址。"""
+    tbl = h.alloc(258, align=8)
+    buf = bytearray(258)
+    for c in range(256):
+        f = 0
+        if 0x30 <= c <= 0x39 or 0x41 <= c <= 0x5A or 0x61 <= c <= 0x7A:
+            f |= 7          # isalnum
+        if c == 0x20 or 0x09 <= c <= 0x0D:
+            f |= 8          # isspace
+        if c < 0x20 or c == 0x7F:
+            f |= 0x20       # iscntrl
+        buf[c + 1] = f
+    h.write(tbl, bytes(buf))
+    cell = h.alloc(8, align=8)
+    h.write(cell, struct.pack("<Q", tbl))
+    return cell
+
+
+def data_import_slot(h, name):
+    """数据导入(GLOB_DAT)的 GOT 目标：返回一块【可写数据】的地址（不是代码桩）。
+
+    已知符号给可用初值（_ctype_ 造表、__sF/stdio 造零缓冲），其余给零初始化单元。
+    """
+    if name in ("_ctype_", "__ctype_"):
+        return _ctype_cell(h)
+    size = 0x100 if name in ("__sF", "stdout", "stderr", "stdin") else 8
+    cell = h.alloc(size, align=8)
+    h.write(cell, b"\x00" * size)
+    return cell
+
+
 def apply_relocations(h, path, stubs):
     """Loader-correct relocation pass:
 
-    - R_AARCH64_RELATIVE (1027) -> r_addend (base 0 in emulation)
-    - GLOB_DAT/JUMP_SLOT on a DEFINED symbol -> its st_value (e.g. opaque-list globals)
-    - Undefined symbols -> stub (builtin libc impl or ret-0)
+    - R_AARCH64_RELATIVE (1027) / IRELATIVE (1032) -> r_addend (base 0 in emulation)
+    - defined symbol -> st_value + r_addend (fixes R_AARCH64_ABS64 addend, e.g. RTTI vtables)
+    - undefined JUMP_SLOT -> function stub (builtin libc impl or ret-0)
+    - undefined GLOB_DAT  -> data slot (writable data, NOT a code stub; see data_import_slot)
     """
     from elftools.elf.elffile import ELFFile
-    undef = {}
+    R_RELATIVE, R_IRELATIVE, R_GLOB_DAT = 1027, 1032, 1025
+    undef_fn, undef_data = {}, {}
     with open(path, "rb") as f:
         elf = ELFFile(f)
         for sec_name in (".rela.plt", ".rela.dyn"):
@@ -316,7 +657,8 @@ def apply_relocations(h, path, stubs):
                 continue
             symtab = elf.get_section(sec["sh_link"])
             for rel in sec.iter_relocations():
-                if rel["r_info_type"] == 1027:  # R_AARCH64_RELATIVE
+                rtype = rel["r_info_type"]
+                if rtype in (R_RELATIVE, R_IRELATIVE):
                     h.write(rel["r_offset"], struct.pack("<Q", rel["r_addend"]))
                     continue
                 symidx = rel["r_info_sym"]
@@ -324,13 +666,151 @@ def apply_relocations(h, path, stubs):
                     continue
                 sym = symtab.get_symbol(symidx)
                 if sym["st_shndx"] == "SHN_UNDEF":
-                    undef[rel["r_offset"]] = sym.name
+                    if rtype == R_GLOB_DAT:
+                        undef_data[rel["r_offset"]] = sym.name
+                    else:
+                        undef_fn[rel["r_offset"]] = sym.name
                 else:
-                    h.write(rel["r_offset"], struct.pack("<Q", sym["st_value"]))
-    for offset, name in undef.items():
-        cb = stubs.get(name, _ret0)
-        h.write(offset, struct.pack("<Q", h.stub(cb)))
-    return len(undef)
+                    h.write(rel["r_offset"], struct.pack("<Q", sym["st_value"] + rel["r_addend"]))
+    warned = set()
+
+    def _unstubbed(name):
+        def cb(uc, addr, size, user):
+            if name not in warned:
+                warned.add(name)
+                print("[!] unstubbed: %s -> 0" % name, flush=True)
+            from unicorn.arm64_const import UC_ARM64_REG_X0
+            uc.reg_write(UC_ARM64_REG_X0, 0)
+        return cb
+
+    for offset, name in undef_fn.items():
+        cb = stubs.get(name)
+        h.write(offset, struct.pack("<Q", h.stub(cb if cb is not None else _unstubbed(name))))
+    for offset, name in undef_data.items():
+        h.write(offset, struct.pack("<Q", data_import_slot(h, name)))
+    return len(undef_fn) + len(undef_data)
+
+
+def run_init(h, path):
+    """执行 DT_INIT / DT_INIT_ARRAY（.so 静态初始化，如 C++ 全局对象构造）。
+
+    不跑初始化 -> std::string/std::vector 等全局对象为空（例：base64 字母表）。
+    失败不致命：单个初始化器异常仅告警并跳过。返回成功执行的个数。
+    """
+    from elftools.elf.elffile import ELFFile
+    with open(path, "rb") as f:
+        dyn = ELFFile(f).get_section_by_name(".dynamic")
+        if dyn is None:
+            return 0
+        init = arr = arrsz = 0
+        for tag in dyn.iter_tags():
+            t = tag.entry.d_tag
+            if t == "DT_INIT":
+                init = tag.entry.d_val
+            elif t == "DT_INIT_ARRAY":
+                arr = tag.entry.d_val
+            elif t == "DT_INIT_ARRAYSZ":
+                arrsz = tag.entry.d_val
+    done = 0
+    if arr and arrsz:
+        for off in range(0, arrsz, 8):
+            try:
+                fn = struct.unpack("<Q", h.read(arr + off, 8))[0]
+            except Exception:  # noqa: BLE001
+                break
+            if fn:
+                try:
+                    h.call(fn)
+                    done += 1
+                except Exception as e:  # noqa: BLE001
+                    print("[!] init_array[%d] @%#x failed: %s" % (off // 8, fn, e))
+    if init:
+        try:
+            h.call(init)
+            done += 1
+        except Exception as e:  # noqa: BLE001
+            print("[!] DT_INIT @%#x failed: %s" % (init, e))
+    return done
+
+
+_SYSCALL_NR = {
+    63: "read", 64: "write", 56: "openat", 57: "close", 62: "lseek", 80: "fstat",
+    79: "newfstatat", 78: "readlinkat", 48: "faccessat", 29: "ioctl", 101: "nanosleep",
+    113: "clock_gettime", 172: "getpid", 174: "getuid", 175: "geteuid", 176: "getgid",
+    178: "gettid", 179: "sysinfo", 160: "uname", 167: "prctl", 222: "mmap",
+    226: "mprotect", 215: "munmap", 318: "getrandom", 94: "exit_group", 93: "exit",
+}
+
+
+def install_syscalls(h, log=True):
+    """装 syscall 层（UC_HOOK_INTR）：给直接 `svc #0` 的 .so 兜底，避免一碰就崩。
+
+    默认：文件类返回"不存在/失败"（利于绕过 /proc 等检测）、getpid/uid 给固定值、
+    getrandom 给确定性伪随机、mmap 走 arena、exit 停机。每个 syscall 首次命中打印一行。
+    注：unicorn 2.x 在 arm64 SVC 触发 INTR 时 PC 已指向下一条（无需 +4）。
+    """
+    from unicorn import UC_HOOK_INTR
+    from unicorn.arm64_const import (
+        UC_ARM64_REG_X0, UC_ARM64_REG_X1, UC_ARM64_REG_X2, UC_ARM64_REG_X8, UC_ARM64_REG_PC)
+    NEG1 = 0xFFFFFFFFFFFFFFFF
+    state = {"seed": 0x12345678, "logged": set()}
+
+    def wr(addr, data):
+        try:
+            h.uc.mem_write(addr, data)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def on_intr(uc, intno, user):
+        nr = uc.reg_read(UC_ARM64_REG_X8)
+        x0, x1, x2 = (uc.reg_read(UC_ARM64_REG_X0), uc.reg_read(UC_ARM64_REG_X1),
+                      uc.reg_read(UC_ARM64_REG_X2))
+        ret = 0
+        if nr == 172:
+            ret = 1234                                   # getpid
+        elif nr in (174, 175, 176, 178):
+            ret = 1000                                   # uid/gid/tid
+        elif nr == 64:
+            ret = x2                                     # write -> 声称写成功
+        elif nr == 63:
+            ret = 0                                      # read -> EOF
+        elif nr == 56:
+            ret = NEG1 - 1                               # openat -> ENOENT
+        elif nr in (48, 78):
+            ret = NEG1                                   # faccessat/readlinkat -> 失败
+        elif nr in (80, 79):
+            wr(x1 if nr == 80 else x2, b"\x00" * 128)    # fstat/newfstatat -> 0
+        elif nr == 113:
+            wr(x1, b"\x00" * 16)                         # clock_gettime -> 0
+        elif nr == 318:
+            n = min(x1, 4096)                            # getrandom -> 确定性伪随机
+            s, buf = state["seed"], bytearray()
+            for _ in range(n):
+                s = (1103515245 * s + 12345) & 0x7FFFFFFF
+                buf.append((s >> 16) & 0xFF)
+            state["seed"] = s
+            wr(x0, bytes(buf))
+            ret = n
+        elif nr == 222:
+            ret = h.alloc(max(1, x1))                    # mmap -> arena
+        elif nr == 160:
+            wr(x0, b"\x00" * 390)                        # uname -> 0
+        elif nr in (93, 94):
+            uc.reg_write(UC_ARM64_REG_PC, h._stop_addr())  # exit/exit_group -> 停机
+            return
+        elif nr in (62, 57, 101, 167, 179, 226, 215):
+            ret = 0
+        elif nr == 29:
+            ret = NEG1                                   # ioctl -> 失败
+        if log:
+            name = _SYSCALL_NR.get(nr, "nr_%d" % nr)
+            if name not in state["logged"]:
+                state["logged"].add(name)
+                print("[syscall] %s(nr=%d) -> %#x" % (name, nr, ret & NEG1), flush=True)
+        uc.reg_write(UC_ARM64_REG_X0, ret & NEG1)
+
+    h.uc.hook_add(UC_HOOK_INTR, on_intr)
+    return state
 
 
 def build_jni(h, default_cb, jni_log=None, tracer=None, dumper=None):
@@ -343,6 +823,27 @@ def build_jni(h, default_cb, jni_log=None, tracer=None, dumper=None):
         UC_ARM64_REG_X0, UC_ARM64_REG_X1, UC_ARM64_REG_X2, UC_ARM64_REG_X3, UC_ARM64_REG_X4)
 
     proxies = {}
+
+    # 字节数组长度表挂在 Harness 上（而非模块全局）：`--setup` 里 `import emu_run` 会因
+    # 主程序以 __main__ 运行而得到"第二个模块实例"，模块全局不可见。用法：h.jni_array_lens[ptr]=n
+    lens = getattr(h, "jni_array_lens", None)
+    if lens is None:
+        lens = {}
+        h.jni_array_lens = lens
+
+    def _cbytes(ptr, limit=65536):
+        """健壮读 C 串（分小块，遇 NUL/未映射即停）——固定大块读会在映射边界整体失败。"""
+        out = bytearray()
+        while len(out) < limit:
+            try:
+                chunk = bytes(h.uc.mem_read(ptr + len(out), min(16, limit - len(out))))
+            except Exception:  # noqa: BLE001
+                break
+            z = chunk.find(b"\x00")
+            if z >= 0:
+                return bytes(out) + chunk[:z]
+            out += chunk
+        return bytes(out)
 
     def read_ptr(reg):
         return h.uc.reg_read(reg)
@@ -379,12 +880,13 @@ def build_jni(h, default_cb, jni_log=None, tracer=None, dumper=None):
     def cb_utf_length(uc, addr, size, user):
         jptr = read_ptr(UC_ARM64_REG_X1)
         cptr = proxies.get(jptr, jptr)
-        s = h.read(cptr, 4096).split(b"\x00", 1)[0] if cptr else b""
-        uc.reg_write(UC_ARM64_REG_X0, len(s))
+        uc.reg_write(UC_ARM64_REG_X0, len(_cbytes(cptr)) if cptr else 0)
 
     def cb_new_byte_array(uc, addr, size, user):
         n = read_ptr(UC_ARM64_REG_X1)
-        uc.reg_write(UC_ARM64_REG_X0, h.alloc(max(1, n)))
+        p = h.alloc(max(1, n))
+        lens[p] = n
+        uc.reg_write(UC_ARM64_REG_X0, p)
 
     def cb_get_byte_array(uc, addr, size, user):
         uc.reg_write(UC_ARM64_REG_X0, read_ptr(UC_ARM64_REG_X1))
@@ -399,8 +901,7 @@ def build_jni(h, default_cb, jni_log=None, tracer=None, dumper=None):
 
     def cb_array_length(uc, addr, size, user):
         ptr = read_ptr(UC_ARM64_REG_X1)
-        s = h.read(ptr, 4096).split(b"\x00", 1)[0] if ptr else b""
-        uc.reg_write(UC_ARM64_REG_X0, len(s))
+        uc.reg_write(UC_ARM64_REG_X0, lens.get(ptr, len(_cbytes(ptr)) if ptr else 0))
 
     slots = {i: default_cb for i in range(0, 240)}
     slots.update({
@@ -580,6 +1081,14 @@ def main():
     ap.add_argument("--trace", action="store_true")
     ap.add_argument("--timeout", type=int, default=0)
     ap.add_argument("--raw", action="store_true")
+    ap.add_argument("--no-init", action="store_true",
+                    help="不执行 DT_INIT/DT_INIT_ARRAY（默认执行，用于初始化 C++ 全局对象）")
+    ap.add_argument("--no-syscalls", action="store_true",
+                    help="不装 syscall 层（默认装：给直接 svc #0 的 .so 兜底）")
+    ap.add_argument("--ret-str", action="store_true",
+                    help="按 sret(x8) 调用并解码返回的 std::string（C++ 返回值）")
+    ap.add_argument("--out-arg", action="append", default=[],
+                    help="调用后 dump 第 N 个实参指向的缓冲：N:LEN（可重复）")
     ap.add_argument("--setup", default="")
     ap.add_argument("--watch-code", action="append", default=[], help="命中 PC（逗号分隔）时打印（可重复）")
     ap.add_argument("--watch-regs", default="", help="watch-code 打印的寄存器，如 x0,x1,x2")
@@ -647,14 +1156,39 @@ def main():
             h.write(int(addr_s, 0), text.encode("utf-8"))
 
         if args.setup:
-            ns = {}
+            ns = {"__file__": os.path.abspath(args.setup), "__name__": "__emu_setup__"}
             exec(compile(open(args.setup, encoding="utf-8").read(), args.setup, "exec"), ns)  # noqa: S102
             ns["setup"](h)
+
+        if not args.no_init:
+            n_init = run_init(h, args.so)
+            if n_init:
+                print("[init] ran %d initializer(s)" % n_init)
+
+        if not args.no_syscalls:
+            install_syscalls(h)
+
+        _sret = None
+        if args.ret_str:
+            from unicorn.arm64_const import UC_ARM64_REG_X8
+            _sret = h.alloc(32, align=8)
+            h.uc.reg_write(UC_ARM64_REG_X8, _sret)
 
         report = install_watchers(h, args)
 
         r = h.call(off, args=call_args, timeout=args.timeout)
         print("x0=%#x  insns=%d" % (r.x0, r.insns))
+
+        if _sret is not None:
+            from emu_setup import read_std_string
+            print("[ret-str] %r" % bytes(read_std_string(h, _sret)))
+
+        for spec in args.out_arg:
+            n_s, len_s = spec.split(":")
+            i, ln = int(n_s, 0), int(len_s, 0)
+            if i < len(call_args) and call_args[i]:
+                print("[out-arg %d]" % i)
+                print(hexdump(h.read(call_args[i], ln), call_args[i]))
 
         for spec in args.read:
             addr_s, len_s = spec.split(":")
