@@ -180,6 +180,7 @@ adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev
 | `dex_dedupe.py` | 产物去重/校验 | unpacking |
 | `fix_elf.py` | 修复 ELF header | unpacking |
 | `fix_axml.py` | 修复爱加密魔改 AXML（Manifest 多 4 字节填充+headerSize 谎报 0x000C，jadx/apktool 无法解析时用） | static-analysis |
+| `ipa.py` | IPA 元数据（名称/BundleID/大小/版本/MD5）+ 结构概览/Mach-O 清单/字符串搜索/解包 | static-analysis |
 | `patch_gadget_threadnames.py` | patch gadget 线程名 | native-analysis |
 | `frida_run.py` | **非交互 Frida 运行器**（spawn/attach → 加载 → 观察 N 秒 → 存活报告 → detach；`-l` 支持 skill 内相对路径；`-e @cfg.js` 注入 CONFIG_OVERRIDE） | native-analysis |
 | `device_ui.py` | 设备交互（text/tap/swipe/key/shot/logs/launch/clear/foreground/size） | behavior-analysis |

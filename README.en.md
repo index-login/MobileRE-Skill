@@ -146,6 +146,7 @@ MobileRE-Skill/
 │   ├── trace_recon.py / cipher_lab.py  # log -> state reconstruction / cipher structure adjudication
 │   ├── fsmon_run.py                 # Device-side kernel file-event capture/analysis (fsmon inotify backend; artifact pull)
 │   ├── check-anti-inject.py / check-janus.bat / debug-gdb.py / janus_check.py  # Detection
+│   ├── ipa.py                       # IPA metadata / structure / Mach-O recon
 │   └── hap_parser.py                # HAP (HarmonyOS) package info parser
 ├── feedback/FEEDBACK.md            # Agent-level feedback loop (local only, not committed)
 ├── requirements.txt                # Python deps (frida/unicorn/capstone/…)
