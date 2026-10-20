@@ -69,7 +69,7 @@ description: 逆向分析自动化助手 — 攻击面枚举 → 静态逆向(JA
 │   ├── device_ui.py                                     操控设备（tap/text/shot/wait-for/launch/wake）
 │   ├── frida_run.py -f <包> -l <脚本> [-t 秒]           非交互跑 Frida（定时/自动退出）
 │   ├── unpack.py <包>                                   脱壳（一键 spawn+dump+校验）
-│   ├── check-*.bat / debug-gdb.py / janus_check.py      前置检测项（注入/调试/Janus）
+│   ├── check-anti-inject.py / check-janus.bat / debug-gdb.py / janus_check.py  前置检测项（注入/调试/Janus）
 │   └── trace_recon.py / cipher_lab.py                   白盒分析（trace 还原 / 密文结构）
 ├── references/                     知识层手册（索引 references/_index.md）
 └── .kilo/skill/frida-mobile-security/
@@ -126,6 +126,7 @@ description: 逆向分析自动化助手 — 攻击面枚举 → 静态逆向(JA
 | 空文件 | 有用产物（`.so`、`.apk` 按需） |
 | 调试用临时脚本 | PoC 验证脚本 |
 | APK 已在 JADX 中加载的 → 删除本地副本 | 仅当无 JADX 可用时保留 |
+| 散落的 app 专属 js hook | 单入口交付脚本（`templates/analysis.py`：加载 `scripts/` 可复用模块 + 少量 app 专属 hook） |
 
 ## 指向
 

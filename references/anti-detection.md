@@ -20,21 +20,24 @@ frida -U -f com.app -l scripts/core/utils.js -l scripts/checklist/fridainject.js
 ```
 
 - 原理：hook `Activity.onCreate` 弹窗"Frida Hook 代码注入成功!!!"
-- 判读：弹窗出现 → Frida 注入成功、无 Java 层检测；弹窗不出现 / 进程被杀 / 无输出 → 存在 frida 环境检测，转入下方 Pipeline
+- 判读：弹窗出现 → 注入成功、无 Java 层检测；弹窗不出现 / 进程被杀 / attach 超时（系统进程可 attach）→ 有检测，转下方 Pipeline；先 `tools/check-anti-inject.py` 注入普通 `.so`：存活 → 分支 C（模式 9）
 - 用途：挂载前先确认"能不能挂上"，是反检测的 0 号判断
 
 ## Pipeline 全览
 
-Phase 1 之后分流，不要盲目走全部 Phase：
+Phase 1 之后分流，不要盲目走全部 Phase。本 Pipeline 仅覆盖 SO/native 侧；干预模块只在确认阻断后业务可用时启用。
 
 ```
-Phase 1: exit_blocker + so_loader_tracer → 定位检测 so + 观察退出信号
+Phase 1: so_loader_tracer（观测）→ 定位检测 so；需抓退出调用栈时临时挂 exit_blocker
   ↓
+  ├── 分支 C（特征检测）：注入即死、普通 .so 存活；有任意 .so 注入通道
+  │   处理：改名 + patch gadget（模式 9）；区别于纯绕：不依赖检测代码定位
+  │
   ├── 分支 A（线程检测）：thread_blocker 或 thread_monitor → function_patcher
-  │   适用：exit_blocker 捕获到 BLOCKED，调用栈来自 pthread_create
+  │   适用：临时 exit_blocker 捕获到 BLOCKED，调用栈来自 pthread_create
   │
   └── 分支 B（init_array 检测）：Phase 0 → init_hook + hasSvc0
-       适用：exit_blocker BLOCKED 来自 init_array 路径，或 exit_blocker 无 BLOCKED（svc #0 绕过）
+       适用：临时 exit_blocker BLOCKED 来自 init_array，或无 BLOCKED（svc #0 直退）
        ↓
        Phase 3: dlsym_tracer → 发现运行时解密的符号
        Phase 5: shellcode_detector → 定位 mmap + PROT_EXEC shellcode
@@ -65,9 +68,9 @@ llvm-objdump -d /tmp/linker64 | grep "call_constructors"
 
 ## Phase 1：定位检测 so
 
-模块: `scripts/core/utils.js + scripts/bypass/exit_blocker.js + scripts/bypass/so_loader_tracer.js`
+模块: `scripts/core/utils.js + scripts/bypass/so_loader_tracer.js`；需要抓退出调用栈时**临时**加 `exit_blocker`，抓到即撤。
 
-`exit_blocker` 用 `Interceptor.replace` 替换 `exit_group/_exit/abort/kill/tgkill` 及其 syscall 对应项，真正阻止进程退出。`so_loader_tracer` 记录闪退前最后加载的 so。
+`so_loader_tracer` 记录闪退前最后加载的 so。`exit_blocker` 仅作诊断：检测触发后进程常已降级/死循环，保活 ≠ 可用。
 
 输出示例：
 ```
@@ -77,14 +80,15 @@ llvm-objdump -d /tmp/linker64 | grep "call_constructors"
 → Detector SO = `libDetect.so`
 
 **路由决策**：
-- 调用栈来自 `pthread_create` → **分支 A**（线程检测），跳至下方
-- 调用栈来自 `init_array` 或 无 BLOCKED 日志 → **分支 B**，继续 Phase 2
+- 有 BLOCKED 且调用栈来自 `pthread_create` → **分支 A**（线程检测）
+- 有 BLOCKED 来自 `init_array`，或无 BLOCKED（svc #0 直退） → **分支 B**
+- 注入即死/进程被杀，但普通 `.so` 存活 → **分支 C**（特征检测）
 
 ---
 
 ## 分支 A：thread_blocker 主动阻断（线程检测模式）
 
-模块: `utils + thread_blocker(blockCallers:["libmsaoaidsec.so"]) + exit_blocker`
+模块: `utils + thread_blocker(blockCallers:["libmsaoaidsec.so"])`（`exit_blocker` 按需）
 
 输出示例：
 ```
@@ -150,9 +154,9 @@ so 加载流程：`do_dlopen → call_constructors → init_proc → init_array 
 
 ---
 
-## Phase 4：exit_blocker 持续开启
+## Phase 4：exit_blocker 按需
 
-**全分析过程必须加载 exit_blocker。** 进程被保活后检测线程可能进入死循环——这是正常现象，你正在阻止其退出操作。
+不默认全程挂载；只用于短时抓退出栈，抓到即撤。保活死循环 ≠ 可用。
 
 ---
 
@@ -284,6 +288,21 @@ FP.patchBatch([
   - 该类目标：业务类 hook 一律延迟到 T+6~15s 安装（用 `setTimeout` 包安装函数，或由 runner 层延迟加载）
   - **boot 类（`org.json` 等）可即时安装（已验证）；选点优先 boot/JNI 点，少挂业务 Java 方法
 - **注意**: 先排除"重签名/二次打包"干扰——该状态下防重打包自校验会秒退且无 tombstone，容易误判为 hook 被杀
+
+### 模式 9: Gadget 改名注入（有任意 `.so` 注入通道时）
+
+- **适用**: 目标只检测 Frida 特征（maps 文件名 / 线程名），但允许任意 `.so` 注入
+- **不适用**: 通用 maps 白名单 / 完整性校验（改名无效，需 memfd 或自写 `.so`）
+- **选型**: 能稳定 attach/spawn、需要 CLI 交互、检测代码可定位 → 先纯绕（hider/init_hook）；attach 超时或注入即死、壳只认特征、已有注入通道 → 本模式
+- **绕过**: 不改检测逻辑，直接注入改名 + patch 后的 gadget
+- **步骤**:
+  1. 同版本 gadget 改名（如 `libnemedia.so`）；配置同名同目录 `libnemedia.config.so`：
+     ```json
+     {"interaction":{"type":"listen","address":"127.0.0.1","port":27042,"on_load":"resume"}}
+     ```
+  2. `python3 tools/patch_gadget_threadnames.py in.so out.so`（替换 `frida-gadget`/`gum-js-loop`/`gmain`）
+  3. App 稳定运行后注入 → `adb forward tcp:27042 tcp:27042` → `frida -H 127.0.0.1:27042 -n Gadget -l hook.js`
+- **注意**: 运行中注入成功率高于冷启动（壳启动期检查密集）
 
 ---
 
