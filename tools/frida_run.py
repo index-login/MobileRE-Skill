@@ -13,9 +13,9 @@
   -U            使用 USB 设备
   -f pkg        spawn 并挂载（推荐，hook 早于应用代码；resume 由本工具控制）
   -n name       attach 到已运行进程：支持进程名 / 包名 / App label（自动解析）
-  -e 'js'       附加 JS 源码（如 var CONFIG_OVERRIDE={...};），先于 -l 注入，可重复
+  -e 'js'       附加 JS 源码（与 -l 拼接为同一脚本、先置注入；CONFIG_OVERRIDE 的正确入口），可重复；'@cfg.js' 从文件读
   -l file       加载脚本，可重复（首个必须是 scripts/core/utils.js；支持 skill 内相对路径）
-  -t seconds    保持挂载的时长，默认 15
+  -t seconds    保持挂载的时长，默认 15（目标消失/session detached → 提前停止并即时报告）
   --kill        结束时杀掉目标进程
   --stdio       同时转发目标进程 stdout/stderr（spawn 模式）
   --host-fallback host:port   spawn 被 server 判为 jailed 时回退到此通道
@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from collections import deque
 
@@ -230,6 +231,7 @@ def main():
             print("[runner] attached to %s (pid=%d, name=%r)" % (args.attach, pid, pname), flush=True)
 
     detach = {}
+    detach_event = threading.Event()
 
     def _on_detached(reason, *rest):
         detach["reason"] = str(reason)
@@ -237,6 +239,11 @@ def main():
         if crash is not None:
             detach["signal"] = str(getattr(crash, "signal", "") or "")
             detach["address"] = str(getattr(crash, "address", "") or "")
+        detail = detach["reason"]
+        if detach.get("signal"):
+            detail += " signal=%s" % detach["signal"]
+        emit("[runner] session detached: %s" % detail)
+        detach_event.set()
 
     session.on("detached", _on_detached)
 
@@ -260,12 +267,19 @@ def main():
         dev.resume(pid)
         print("[runner] resumed main thread", flush=True)
 
-    time.sleep(args.timeout)
+    t_start = time.time()
+    early = None
+    if detach_event.wait(timeout=args.timeout):
+        early = detach.get("reason", "detached")
+    elapsed = time.time() - t_start
+    if early:
+        sig = detach.get("signal") or ""
+        print("[runner] early-stop at %.1fs: %s%s" % (elapsed, early, (" signal=" + sig) if sig else ""), flush=True)
 
     if pid is not None:
         try:
             alive = any(p.pid == pid for p in dev.enumerate_processes())
-            print("[runner] alive after %ds: %s" % (args.timeout, alive), flush=True)
+            print("[runner] alive after %ds: %s" % (int(elapsed) if early else args.timeout, alive), flush=True)
             if not alive:
                 tip = diagnose(detach, "\n".join(RECENT))
                 if tip:
