@@ -49,7 +49,7 @@ MobileRE-Skill/                    ← 工作目录（项目根）
 │   ├── frida_run.py / device_ui.py   非交互 Frida 运行 / 设备交互
 │   ├── fsmon_run.py                  设备侧内核文件事件采集（设备侧 fsmon 二进制，缺件自装）
 │   ├── emu_run.py / uniharness.py   离线仿真（rev-unicorn-debug）
-│   └── check-*.bat / debug-gdb.py / janus_check.py   检测项（注入/调试/Janus）
+│   └── check-anti-inject.py / check-janus.bat / debug-gdb.py / janus_check.py   检测项（注入/调试/Janus）
 ├── <包名>/                         ← 每个 App 的分析产物（不入库）
 ├── feedback/FEEDBACK.md            ← 反馈积压（agent 级，本地保留不入库）
 └── .kilo/

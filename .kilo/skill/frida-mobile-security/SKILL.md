@@ -239,7 +239,7 @@ var CONFIG_OVERRIDE = {
 
 | 工具 | 检测目标 | 用法 |
 |------|---------|------|
-| `check-anti-inject.bat` | 防注入（ptrace + /proc/pid/mem） | `tools/check-anti-inject.bat <包名>` |
+| `check-anti-inject.py` | 防注入（ptrace + /proc/pid/mem） | `python3 tools/check-anti-inject.py <包名>` |
 | `debug-gdb.py` | 防调试（ptrace / TracerPid） | `py -3 tools/debug-gdb.py <包名>` |
 | `check-janus.bat` | APK 元数据提取（GetAPKInfo.jar） | `tools/check-janus.bat <apk路径>` |
 | `janus_check.py` | **Janus 备选检测**：apksigner V1/V2/V3 签名验证（不解析 Manifest，免疫加固魔改） | `python3 tools/janus_check.py <apk路径>` |

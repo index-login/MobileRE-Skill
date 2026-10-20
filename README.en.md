@@ -145,7 +145,7 @@ MobileRE-Skill/
 │   ├── emu_run.py / uniharness.py   # Unicorn offline emulation (--watch-* observability)
 │   ├── trace_recon.py / cipher_lab.py  # log -> state reconstruction / cipher structure adjudication
 │   ├── fsmon_run.py                 # Device-side kernel file-event capture/analysis (fsmon inotify backend; artifact pull)
-│   ├── check-anti-inject.bat / check-janus.bat / debug-gdb.py / janus_check.py  # Detection
+│   ├── check-anti-inject.py / check-janus.bat / debug-gdb.py / janus_check.py  # Detection
 │   └── hap_parser.py                # HAP (HarmonyOS) package info parser
 ├── feedback/FEEDBACK.md            # Agent-level feedback loop (local only, not committed)
 ├── requirements.txt                # Python deps (frida/unicorn/capstone/…)

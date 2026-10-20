@@ -145,7 +145,7 @@ MobileRE-Skill/
 │   ├── emu_run.py / uniharness.py   # Unicorn 离线仿真（含 --watch-* 观测层）
 │   ├── trace_recon.py / cipher_lab.py  # 观测日志→状态重建 / 密码结构判定（层/表/编排）
 │   ├── fsmon_run.py                 # 设备侧内核文件事件采集与分析（fsmon inotify 后端；落盘件 pull）
-│   ├── check-anti-inject.bat / check-janus.bat / debug-gdb.py / janus_check.py  # 检测项
+│   ├── check-anti-inject.py / check-janus.bat / debug-gdb.py / janus_check.py  # 检测项
 │   └── hap_parser.py                # HAP（鸿蒙）包信息解析
 ├── feedback/FEEDBACK.md            # agent 级反馈闭环（本地保留，不入库）
 ├── requirements.txt                # Python 依赖（frida/unicorn/capstone/…）
