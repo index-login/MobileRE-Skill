@@ -198,6 +198,7 @@ adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev
 |------|------|
 | `templates/analysis.py` | Python 工作流模板（推荐，自动处理模块加载顺序） |
 | `templates/custom_hook.js` | 自定义 hook 模板 |
+| `templates/http_mirror.py` | **镜像转发器**：Frida 明文 → HTTP → 代理（Yakit/Burp）。默认 `TZTREQ`/`TZTRESP` 区分方向；echo 消 502；`--check` 自检；控制面 `/__stats`、`/__history`、`/__replay`、`/__rpc` |
 | `checklist/webview_ssl_check.js` | WebView SSL 检测清单 |
 | `checklist/fridainject.js` | **frida 环境检测项**：注入后弹窗不出现/进程被杀 = 存在检测（验证注入是否成功） |
 
