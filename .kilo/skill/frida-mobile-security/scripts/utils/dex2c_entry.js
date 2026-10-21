@@ -237,6 +237,10 @@
   }
 
   Java.perform(function () {
+    if (Process.arch !== "arm64" || Process.pointerSize !== 8) {
+      U.fail("[!] dex2c_entry 仅支持 arm64/64 位（当前 " + Process.arch + "/" + Process.pointerSize * 8 + " 位）");
+      return;
+    }
     if (!CONFIG.classes.length) {
       U.ok("[i] 用法：CONFIG_OVERRIDE = { dex2c_entry: { classes: [\"com.a.B\"], methods: [\"onCreate\"], hook: false } }");
       U.ok("[i] 不需要在 native 注册时在场，attach 场景可用");

@@ -66,6 +66,22 @@ frida -H 127.0.0.1:8888 -f com.app -l scripts/core/utils.js -l scripts/monitors/
 - 90% 场景到此为止：明文、密文、key、算法参数、返回值全拿到
 - 需要 key 来源 → hook 上层调用者；需要中间值 → 下钻子函数 hook
 
+#### 2.0.1 先定位 Dex2C 入口（Java → native 那一层）
+
+```js
+// cfg.js
+var CONFIG_OVERRIDE = { dex2c_entry: { classes: ["com.a.B"], methods: ["encrypt"] } };
+```
+```bash
+frida -H 127.0.0.1:27042 -n Gadget -l scripts/core/utils.js -l cfg.js \
+  -l scripts/utils/dex2c_entry.js -q -t 15
+```
+
+- 拿到 `so+offset` → Ghidra 只反汇编这一个函数
+- 磁盘 so 可能是加密的（offset 处反汇编是无效指令）→ 先用 `utils/so_dump.js` dump 运行时模块再分析
+- 输出 `native=false / data_=0` → 该方法运行时已被壳回填成 Java，不是 Dex2C；改用 `utils/dex_finder.js` dump 内存 dex
+- `scan_register_natives.js` 只在 spawn（注册时在场）有效；attach 场景用 `dex2c_entry.js`
+
 ### 2.1 unidbg 模拟执行（复现算法，无需真机/IDA）
 
 **场景**：hook 拿到数据但需要「复现算法」（写脚本模拟）、或 hook 拿不到完整逻辑时。
@@ -409,4 +425,4 @@ if (syscall) {
 | 导入函数（strncmp/memcmp 等） | hook libc 导出 + `Process.findModuleByAddress(this.returnAddress)` 过滤（见 2.5） |
 | 字符串引用定位 | `tools/so.py strref` + Ghidra |
 | 内联 SVC 扫描 | `tools/so.py svc` |
-| Dex2C 定位 native 实现 | `utils + scan_register_natives.js` → Ghidra 单函数逆向 |
+| Dex2C 定位 native 实现 | `utils + dex2c_entry.js`（attach）/ `scan_register_natives.js`（spawn）→ Ghidra 单函数逆向 |

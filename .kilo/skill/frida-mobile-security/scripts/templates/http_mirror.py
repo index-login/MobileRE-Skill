@@ -83,7 +83,6 @@ import base64
 import json
 import os
 import queue
-import signal
 import socket
 import sys
 import threading
@@ -622,6 +621,7 @@ def run_script(args):
 
 
 def main():
+    global HISTORY, ALLOWED
     ap = argparse.ArgumentParser(description="HTTP 镜像转发器（Frida → 代理）")
     src = ap.add_mutually_exclusive_group(required=False)
     src.add_argument("--script", help="Frida JS 文件（直连模式）")
@@ -663,6 +663,7 @@ def main():
 
     METHODS["req"] = args.req_method.upper()
     METHODS["resp"] = args.resp_method.upper()
+    ALLOWED = tuple(sorted(set(ALLOWED) | {METHODS["req"], METHODS["resp"]}))
     AUTO_METHOD[0] = not args.no_auto_method
     if args.resp_patterns:
         RESP_PATTERNS[:] = [x.strip() for x in args.resp_patterns.split(",") if x.strip()]
