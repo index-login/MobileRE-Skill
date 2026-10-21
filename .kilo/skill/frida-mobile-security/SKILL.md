@@ -168,6 +168,7 @@ adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev
 | `dex_defineclass_dump.js` | DefineClass 被动拦截 dump | unpacking |
 | `codeitem_dump.js` | 二代壳提取：主动 loadClass 触发回填 + 整 DEX dump | unpacking |
 | `scan_register_natives.js` | 定位 native 方法实现（Dex2C 按需分析） | native-analysis |
+| `dex2c_entry.js` | 按 ArtMethod 定位 native/Dex2C 入口（attach 可用，解析匿名跳板） | native-analysis |
 
 ### tools/（项目根：独立工具，无 Frida 依赖）
 
