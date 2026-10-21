@@ -157,6 +157,7 @@ adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev
 | `so_loader_tracer.js` | 记录 do_dlopen 路径+基址 | anti-detection |
 | `root_bypass.js` | Root 检测绕过（File.exists/系统属性） | anti-detection |
 | `ssl_unpinning.js` | SSL Pinning 通用绕过（SSLContext/OkHttp2·3/WebView/Conscrypt/TrustKit/Cronet 等 12 类目，纯 Java 层） | crypto-hook |
+| `fingerprint_bypass.js` | 指纹/生物识别绕过（BiometricPrompt / FingerprintManagerCompat / FingerprintManager，直接回调成功） | crypto-hook |
 
 ### utils/（Frida 内存工具，JS）
 
