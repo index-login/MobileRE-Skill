@@ -172,6 +172,72 @@ Android App 的网络通信分 5 层架构，每层 SSL 忽略的检测 API 不�
 
 ---
 
+## 六、Android Keystore 密钥策略审计
+
+### 何时读
+
+App 用生物识别/硬件密钥保护本地数据，或抓到的密文怀疑由 Keystore 密钥加密时。
+目标：拿到"密钥是什么、怎么保护的、能不能导出"三类事实，再据此定后续路线。
+
+### 决策树
+
+```
+想拿到什么？
+├─ 只要事实（密钥清单 / 创建策略 / 密钥操作）
+│   → utils + monitors/keystore_monitor
+└─ 还要"哪些配置是弱的"（领域判定）
+    → utils + monitors/keystore_monitor + checklist/keystore_audit
+        （audit 自带 hook，可单独加载）
+```
+
+### 关键事实 → 解读（判断依据）
+
+脚本只输出事实，以下是**解读配方**（不进脚本）：
+
+| 事实 | 解读 |
+|---|---|
+| `insideSecureHardware=true` | 密钥在安全硬件，`getEncoded()` 必为 null，无法导出 |
+| `getEncoded() != null`（AndroidKeyStore 密钥） | 异常：密钥材料可被应用读到 |
+| `origin=IMPORTED` | 密钥由外部导入，非本机生成 |
+| `userAuthRequired=true` + `validityDuration=-1` | 每次使用都需认证（最强） |
+| `userAuthRequired=true` + `validityDuration>0` | 解锁后**该秒数内**可复用密钥（无需再次认证） |
+| `userAuthRequired=false` | 密钥不绑定用户认证 |
+| `invalidatedByBiometricEnrollment=false` | 新增生物特征后旧密钥仍有效 |
+| `randomizedEncryptionRequired=false` | 调用方可控 IV |
+| 用途位（purposes） | ENCRYPT / DECRYPT / SIGN / VERIFY / WRAP_KEY / UNWRAP_KEY / DERIVE_KEY / AGREE_KEY |
+
+标准域对照（**参考**；条款编号随版本变，勿硬编码）：认证绑定强度 → MASVS `AUTH-2`；
+密钥存储/不可导出 → `CRYPTO-1`；IV/算法配置 → `CRYPTO-2`。
+
+### 判定规则（checklist/keystore_audit）
+
+| 规则 | 条件 | 级别 |
+|---|---|---|
+| K1 | `userAuthRequired=true` 且 `validityDuration>0` | WEAK |
+| K2 | `userAuthRequired=false` | INFO |
+| K3 | `userAuthRequired=true` 且 `invalidatedByBiometricEnrollment=false` | WEAK |
+| K4 | `userAuthRequired=true` 且 `unlockedDeviceRequired≠true` | INFO |
+| K5 | `insideSecureHardware=false` | INFO |
+| K6 | `origin=IMPORTED` | INFO |
+| K7 | AndroidKeyStore 密钥却 `getEncoded()!=null` | HIGH |
+| K8 | `randomizedEncryptionRequired=false` | WEAK |
+| K9 | ECB / AES<128 / NoPadding(加密) / DIGEST_NONE(签名) | WEAK·INFO |
+
+K4 会与 K1/K3 同时命中（同一密钥的多个事实），属预期；用 `severityFloor` 降噪。
+规则是纯函数，可离线自测：`KeystoreAudit.evaluate(view)`。
+
+### 坑
+
+| 坑 | 说明 |
+|---|---|
+| 用 `getKey` 拿不到 KeyInfo | KeyInfo 须经 `SecretKeyFactory`/`KeyFactory.getKeySpec(key, KeyInfo.class)` 取（脚本已处理） |
+| `getEntry` 返回 Entry 不是 Key | 需再取 `getSecretKey()/getPrivateKey()`（脚本已处理） |
+| alias 归属靠 `lastBuilderAlias` 启发式 | Builder 实例→alias 无稳定映射；顺序构造时准确，交叉构造会串味 |
+| 部分 getter 随 API level 缺失 | 脚本逐个 `try/catch`，缺失即跳过（如 `setUserPresenceRequired` 在 Android 10 不存在） |
+| 硬件密钥不可导出 | 这是设计而非缺陷；结论应是"走设备+认证路线"，不是"无法分析" |
+
+---
+
 ## 常用组合
 
 | 分析目标 | 模块组合 |
@@ -181,3 +247,5 @@ Android App 的网络通信分 5 层架构，每层 SSL 忽略的检测 API 不�
 | HTTP 明文 | `utils + ssl_plaintext` |
 | 内存敏感数据 | `utils + memory_scanner` |
 | 看特定 URL | `utils + ssl_plaintext(urlFilter:["api.example.com"])` |
+| Keystore 密钥事实 | `utils + keystore_monitor` |
+| Keystore 弱配置判定 | `utils + keystore_monitor + keystore_audit` |
