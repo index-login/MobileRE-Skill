@@ -80,6 +80,7 @@ adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev
 | "看网络请求" "抓包" "还原协议" "行为摸底" "全程监控" "污点追踪" "内存扫描" "Intent" "Serializable" "文件落地" "内核视角" "谁写的" | 行为分析 | `references/behavior-analysis.md` |
 | "分析这个类" "攻击面" "序列化" "WebView" "深链" "Provider" "反序列化" | 静态分析 | `references/static-analysis.md` |
 | "分析这个 so" "native 函数" "so 里的加密" "字符串引用" "交叉引用" "逆向 so" "找不到导出" | SO 层分析 | `references/native-analysis.md` |
+| "这个函数是干什么的" "无符号函数" "识别算法" "魔数" "给它命个名" | 函数命名 | `references/so-func-naming.md`（或 skill `func-naming`） |
 | "模块无输出" "闪退" "ANR" "hook 不生效" "报错" | 故障诊断 | `references/troubleshooting.md` |
 | "写自定义 hook" "API 用法" "Stalker" "RegisterNatives" "内存搜索" | API 参考 | `references/api-reference.md` |
 
@@ -280,6 +281,7 @@ var CONFIG_OVERRIDE = {
 | 行为摸底 / 网络协议 / 污点追踪 / 交叉分析 | `references/behavior-analysis.md` |
 | 攻击面枚举 / 序列化 / WebView / jadx-mcp | `references/static-analysis.md` |
 | SO 层分析 / Ghidra / unidbg / 分层下钻 / 字符串引用 | `references/native-analysis.md` |
+| 无符号函数命名 / 魔数 / 成对调用 / 调用者递归 | `references/so-func-naming.md` |
 | 故障排查（无输出/闪退/init_hook 陷阱） | `references/troubleshooting.md` |
 | Frida API 手册（写自定义 hook 时） | `references/api-reference.md` |
 | 参考文章索引（脱壳原理/攻击面方法论） | `references/articles.md` |

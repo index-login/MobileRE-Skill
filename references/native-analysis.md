@@ -258,6 +258,8 @@ Ghidra MCP 支持反编译 + 调试（`ghidra_*` 工具），用于分析 so 的
 
 ### 3.4 处理去符号/STRIPPED 库
 
+函数命名（"这个函数是干什么的"）见 [so-func-naming.md ›「无符号函数命名」](so-func-naming.md)；定位未知函数仍用字节特征扫描：
+
 ```javascript
 // 扫描已知字节模式
 Memory.scan(mod.base, mod.size, "55 48 89 E5", { onMatch: function (address, size) { } });

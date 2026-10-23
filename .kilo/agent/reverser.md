@@ -41,6 +41,7 @@ description: 逆向分析自动化助手 — 攻击面枚举 → 静态逆向(JA
 | `troubleshooting.md` | 崩溃 / 无输出 / hook 不生效的判定与修复 | 崩了、没输出、结果不可解释 |
 | `anti-detection.md` | 反调试/反注入对抗与隐藏 | 检出 Frida、闪退、要藏特征 |
 | `native-analysis.md` | SO 层下钻、字符串/交叉引用、离线复算 | 深挖 .so、单函数仿真（+ skill `rev-unicorn-debug`） |
+| `so-func-naming.md` | 无符号函数命名：符号表优先、魔数/成对调用、Ghidra 协作 | 已知地址判函数用途/算法 |
 | `behavior-analysis.md` | 行为摸底、协议还原、Intent 污点、设备交互 | 看网络/跨组件、操作设备（用 `tools/device_ui.py`） |
 | `crypto-hook.md` | 加解密监控、hook/替换套路、SSL 明文 | 找算法/密钥、改参数、伪造返回 |
 | `static-analysis.md` | 攻击面枚举、序列化、WebView、jadx | 分析类、找入口、攻击面 |

@@ -130,7 +130,7 @@ MobileRE-Skill/
 │       │       ├── utils/               # 内存 dump JS（so_dump / dex_* / codeitem）
 │       │       ├── checklist/           # 检测清单脚本
 │       │       └── templates/           # 模板（analysis.py / custom_hook.js）
-│       ├── rev-symbol/              # 无符号 .so 函数命名（Ghidra MCP）
+│       ├── func-naming/             # 无符号函数命名（符号表/魔数/调用模式）
 │       ├── rev-struct/              # 结构体恢复（偏移访问聚合）
 │       ├── rev-unicorn-debug/       # Unicorn 模拟调试（工具在 tools/）
 │       ├── dex-mem-dump/            # 运行时 DEX 脱壳（panda + mem，ptrace-free）
