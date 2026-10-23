@@ -296,6 +296,8 @@ info/strings 发现 → strref 引用 → disasm 上下文 → jni hook 前置 �
 
 ### 3.6 复杂函数离线仿真（emu_run 广度 + setup 助手）
 
+> 环境模拟（JNI 槽位 / syscall / TLS / 回调 / 迭代调试）见 [so-emulation.md ›「单函数离线仿真（SO Emulation）」](so-emulation.md)。
+
 设计目标：**广度优先**——尽量能模拟任意 so 函数；极难/需完整运行时的才升级 unidbg（深度），动态验证仍可走 Frida。
 
 **加载即自动处理**（无需 setup）：重定位分流（`JUMP_SLOT`→函数桩 / `GLOB_DAT`→数据单元，内置 `_ctype_` 表）、`DT_INIT_ARRAY`（C++ 全局对象）、syscall 层（`svc #0` → 常用 syscall 假实现）、内置 libc 桩（`mem*/str*/calloc/realloc/sprintf/pthread_*/ptrace/fopen/…`）。未桩导入首次命中打印 `[!] unstubbed: <name> -> 0`（避免静默 ret 0）。

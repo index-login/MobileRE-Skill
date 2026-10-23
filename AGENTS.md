@@ -57,7 +57,7 @@ MobileRE-Skill/                    ← 工作目录（项目根）
 │   ├── unpack.py / dex_*.py         脱壳与 DEX 处理
 │   ├── frida_run.py / device_ui.py   非交互 Frida 运行 / 设备交互
 │   ├── fsmon_run.py                  设备侧内核文件事件采集（设备侧 fsmon 二进制，缺件自装）
-│   ├── emu_run.py / uniharness.py   离线仿真（rev-unicorn-debug）
+│   ├── emu_run.py / uniharness.py   离线仿真（so-emulate）
 │   └── check-anti-inject.py / check-janus.bat / debug-gdb.py / janus_check.py   检测项（注入/调试/Janus）
 ├── <包名>/                         ← 每个 App 的分析产物（不入库）
 ├── feedback/FEEDBACK.md            ← 反馈积压（agent 级，本地保留不入库）
@@ -134,6 +134,7 @@ if (typeof CONFIG_OVERRIDE !== 'undefined') {
 
 细则统一维护在 `references/_index.md`「修订纪律」（小步定点可审 / 不留过程痕 / 反馈沉淀），避免两处维护。
 - **改动呈现格式**：改提示词 / 文档时，一律按「改前 → 改后 + 原因」呈现，便于不看 diff 也能审阅。
+- **只写非默认知识**：手册只落「读代码 / 试运行才能得到的结论」（实测坑、项目 API 与真实参数、具体结果）；模型默认知识（通用 API 用法、标准 ABI、方法论步骤）不落盘——写了不读，还稀释重点。
 
 ## 不重复造轮子
 
