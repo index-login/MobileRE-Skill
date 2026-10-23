@@ -309,7 +309,7 @@
      * 脚本在 app 进程内执行，/data/local/tmp/ 属 root 无写权限，必须用 app 可写目录。
      * 返回路径字符串，失败返回 null。
      */
-    Utils.getDumpDir = function () {
+    Utils.getDumpDir = function (preferExternal) {
         try {
             if (!Java.available) return null;
             var dataDir = null;
@@ -317,7 +317,15 @@
                 var at = Java.use("android.app.ActivityThread");
                 var app = at.currentApplication();
                 if (app) {
-                    dataDir = app.getApplicationContext().getFilesDir().getAbsolutePath();
+                    var ctx = app.getApplicationContext();
+                    if (preferExternal) {
+                        var ext = ctx.getExternalFilesDir(null);
+                        if (ext) {
+                            dataDir = ext.getAbsolutePath();
+                            return;
+                        }
+                    }
+                    dataDir = ctx.getFilesDir().getAbsolutePath();
                 }
             });
             if (!dataDir) return null;

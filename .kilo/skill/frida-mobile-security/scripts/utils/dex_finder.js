@@ -13,6 +13,8 @@
     var CONFIG = U.mergeConfig('dex_finder', {
         // 输出目录（设备上）
         outputDir: "/data/local/tmp/dex_dump/",
+        // 写外部私有目录（/sdcard/Android/data/<pkg>/files/dump/）：无 root / Gadget 时可 adb pull
+        useExternalDir: false,
         // 是否 dump（false 只打印清单）
         autoDump: true,
         // 深度搜索：对抹掉 magic 的壳按 header_size(0x70) 反推
@@ -173,7 +175,7 @@
     // 输出目录优先 app 私有目录（/data/local/tmp 属 root，app 进程无写权限）
     // 注意：必须在 Java 就绪后解析（顶层 Java.perform 异步，currentApplication 未就绪）
     function resolveOutputDir() {
-        var appDumpDir = U.getDumpDir();
+        var appDumpDir = U.getDumpDir(CONFIG.useExternalDir);
         if (appDumpDir) CONFIG.outputDir = appDumpDir;
         U.ensureDir(CONFIG.outputDir);
     }

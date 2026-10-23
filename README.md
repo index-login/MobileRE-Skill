@@ -133,7 +133,7 @@ MobileRE-Skill/
 │       ├── rev-symbol/              # 无符号 .so 函数命名（Ghidra MCP）
 │       ├── rev-struct/              # 结构体恢复（偏移访问聚合）
 │       ├── rev-unicorn-debug/       # Unicorn 模拟调试（工具在 tools/）
-│       ├── rev-dex-dumper/          # 运行时 DEX 脱壳（panda + mem，ptrace-free）
+│       ├── dex-mem-dump/            # 运行时 DEX 脱壳（panda + mem，ptrace-free）
 │       └── karpathy-guidelines/     # 编码准则（开发辅助）
 ├── tools/                           # 独立工具（py/bat/jar，无 Frida 依赖）
 │   ├── so.py                        # SO 静态分析一站式（ELF 侦察/字符串/字节/反汇编/交叉引用/SVC/JNI 判型）

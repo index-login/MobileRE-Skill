@@ -14,6 +14,8 @@
     var CONFIG = U.mergeConfig('dex_defineclass_dump', {
         // 输出目录（设备上）
         outputDir: "/data/local/tmp/dex_dump/",
+        // 写外部私有目录（/sdcard/Android/data/<pkg>/files/dump/）：无 root / Gadget 时可 adb pull
+        useExternalDir: false,
         // 是否 dump（false 只打印清单）
         autoDump: true,
         // 只 dump 含这些包名的 DEX（读 class_defs 时校验），空 = 全部
@@ -109,7 +111,7 @@
     var outputDirRetries = 0;
     function resolveOutputDir() {
         if (outputDirResolved) return;
-        var appDumpDir = U.getDumpDir();
+        var appDumpDir = U.getDumpDir(CONFIG.useExternalDir);
         if (appDumpDir) {
             CONFIG.outputDir = appDumpDir;
             U.ensureDir(CONFIG.outputDir);

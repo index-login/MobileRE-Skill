@@ -20,14 +20,20 @@
         mode: "whole",
         // 输出目录（设备上）
         outputDir: "/data/local/tmp/fart/",
+        // 写外部私有目录（/sdcard/Android/data/<pkg>/files/dump/）：无 root / Gadget 时可 adb pull
+        useExternalDir: false,
         // 启动后自动触发主动 loadClass
         autoFart: true,
+        // autoFart=false 时仍枚举 DexCache 整包 dump（不触发 loadClass）
+        dumpOnly: false,
         // 只处理含这些关键字的类，空 = 全部
         classFilter: [],
         // 主动 loadClass 分批大小（防高级壳检测异常调用模式自杀）
         batchSize: 100,
         // 每批间隔 ms
         batchDelay: 300,
+        // 每 N 批增量落盘一次（0 = 只落盘一次；中途被杀时保住已有产物）
+        dumpEveryBatches: 15,
         // loadmethod 模式专用：ArtMethod 布局偏移（Android 6-9 默认）
         artMethodCodeItemOffset: 8,     // dex_code_item_offset_
         artMethodMethodIndexOffset: 12, // dex_method_index_
@@ -86,6 +92,8 @@
     }
 
     // 分批 loadClass
+    var batchCount = 0;
+
     function loadClassesInBatch(items, index) {
         var end = Math.min(index + CONFIG.batchSize, items.length);
         for (var i = index; i < end; i++) {
@@ -93,16 +101,21 @@
                 items[i].loader.loadClass(items[i].className);
             } catch (e) {}
         }
+        batchCount++;
         U.info("[FART] loadClass " + (index + 1) + "-" + end + " / " + items.length);
         if (end < items.length) {
+            if (CONFIG.dumpEveryBatches > 0 && (batchCount % CONFIG.dumpEveryBatches) === 0) {
+                U.info("[FART] incremental dump @" + end + " / " + items.length);
+                dumpAllDexFiles(false);
+            }
             setTimeout(function () { loadClassesInBatch(items, end); }, CONFIG.batchDelay);
         } else {
-            dumpAllDexFiles();
+            dumpAllDexFiles(true);
         }
     }
 
-    // 回填完成后枚举 DexCache 整 DEX dump
-    function dumpAllDexFiles() {
+    // 回填完成后枚举 DexCache 整 DEX dump（final=false 时不发完成标记，供增量落盘）
+    function dumpAllDexFiles(final) {
         if (!Java.available) { U.fail("Java not available"); return; }
         Java.perform(function () {
             try {
@@ -117,7 +130,9 @@
                         } catch (e) {}
                     },
                     onComplete: function () {
-                        U.ok("[FART] whole-dex dump done, " + dexCount + " unique DEX");
+                        if (final !== false) {
+                            U.ok("[FART] whole-dex dump done, " + dexCount + " unique DEX");
+                        }
                     }
                 });
             } catch (e) {
@@ -325,7 +340,7 @@
     // 输出目录优先 app 私有目录（/data/local/tmp 属 root，app 进程无写权限）
     // 注意：必须在 Java 就绪后解析（顶层 Java.perform 异步，currentApplication 未就绪）
     function resolveOutputDir() {
-        var appDumpDir = U.getDumpDir();
+        var appDumpDir = U.getDumpDir(CONFIG.useExternalDir);
         if (appDumpDir) CONFIG.outputDir = appDumpDir;
         U.ensureDir(CONFIG.outputDir);
     }
@@ -353,6 +368,12 @@
                 fartWhole();
             }
         }, 5000);
+    } else if (CONFIG.dumpOnly) {
+        // 温和模式：不 loadClass，只枚举 DexCache 整包 dump（对脆弱的加固 App）
+        setTimeout(function () {
+            resolveOutputDir();
+            dumpAllDexFiles(true);
+        }, 1000);
     }
 
     global.FartDump = {

@@ -133,7 +133,7 @@ MobileRE-Skill/
 │       ├── rev-symbol/              # Stripped .so function naming (Ghidra MCP)
 │       ├── rev-struct/              # Struct recovery (offset-access aggregation)
 │       ├── rev-unicorn-debug/       # Unicorn emulation debug (tools live in tools/)
-│       ├── rev-dex-dumper/          # Runtime DEX dump (panda + mem, ptrace-free)
+│       ├── dex-mem-dump/            # Runtime DEX dump (panda + mem, ptrace-free)
 │       └── karpathy-guidelines/     # Coding guidelines (dev aid)
 ├── tools/                           # Standalone tools (py/bat/jar, no Frida)
 │   ├── so.py                        # SO static analysis all-in-one (ELF recon/strings/bytes/disasm/xrefs/SVC/JNI typing)
