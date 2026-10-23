@@ -27,6 +27,7 @@
 | `behavior-analysis.md` | 行为摸底、协议还原、Intent 污点、设备交互、内核文件事件（fsmon） | 看网络/跨组件、要操作设备、看文件落地 | ★ |
 | `crypto-hook.md` | 加解密监控、hook/替换套路、SSL 明文、内存扫描 | 找算法/密钥、改参数、伪造返回 | ★ |
 | `native-analysis.md` | SO 层下钻、Ghidra、离线仿真、字符串/交叉引用 | 深挖 .so、单函数复算 | ★ |
+| `native-audit.md` | SO 漏洞审计：可达面 → 分诊 → 深审（含环境能力 / malloc debug / Frida 内存守卫）→ tombstone 归因 → 函数级 fuzz | 要审 .so 找漏洞、判断"某函数是否可达"、怀疑越界/UAF/double-free | ★ |
 | `so-func-naming.md` | 无符号函数命名：符号表优先、魔数/成对调用/参数·返回值模式、卡壳树 | 已知地址要判函数用途/算法 | — |
 | `static-analysis.md` | 攻击面枚举、序列化、WebView、jadx-mcp | 分析类/找入口/攻击面 | ★ |
 | `troubleshooting.md` | 故障排查：无输出/闪退/hook 不生效/完整性校验 | 崩了、没输出、结果不可解释 | ★ |

@@ -2,6 +2,8 @@
 
 > 何时读：用户提到"分析这个 so/native 函数/so 里的加密/字符串引用/交叉引用/逆向 so/找不到导出/STRIPPED"时读取。
 > 由 SKILL.md 任务路由表指向，按需读取。静态工具（Python）在项目根 `tools/`，Frida 模块在 `scripts/monitors/` 和 `scripts/utils/`（命令里的 `scripts/...` 为技能相对：复制执行先 `cd .kilo/skill/frida-mobile-security` 或展开全路径 `.kilo/skill/frida-mobile-security/scripts/...`）。
+> 要**找漏洞**（而非理解功能）、或怀疑堆越界 / UAF / double-free 时，走
+> [native-audit.md ›「一、审计环」](native-audit.md#一审计环)：先定可达面再深审。
 
 ---
 
