@@ -152,6 +152,13 @@ ARG_TYPES = {
 
 CALLEE_SAVED = set("x19 x20 x21 x22 x23 x24 x25 x26 x27 x28 x29 x30".split())
 
+SEGMENT_TYPE_NAMES = {
+    0: "PT_NULL", 1: "PT_LOAD", 2: "PT_DYNAMIC", 3: "PT_INTERP", 4: "PT_NOTE",
+    5: "PT_SHLIB", 6: "PT_PHDR", 7: "PT_TLS",
+    0x6474E550: "PT_GNU_EH_FRAME", 0x6474E551: "PT_GNU_STACK",
+    0x6474E552: "PT_GNU_RELRO", 0x6474E553: "PT_GNU_PROPERTY",
+}
+
 
 class SOError(Exception):
     pass
@@ -183,11 +190,44 @@ class SOImage:
         except Exception as e:  # noqa: BLE001
             raise SOError("not an ELF (parse failed): %s" % e)
         self.machine = self.elf.header.e_machine
+        self.broken_sections = []
         self.loads = [{
             "vaddr": s["p_vaddr"], "offset": s["p_offset"],
             "filesz": s["p_filesz"], "memsz": s["p_memsz"],
             "flags": seg_flags(s["p_flags"]),
-        } for s in self.elf.iter_segments() if s["p_type"] == "PT_LOAD"]
+        } for s in self.iter_segments() if s["p_type"] == "PT_LOAD"]
+
+    def iter_segments(self):
+        """遍历 program header；畸形 section 表会让 elftools 在构造
+        DynamicSegment 时抛错，此处降级为只取段头字段。"""
+        for i in range(self.elf.num_segments()):
+            try:
+                yield self.elf.get_segment(i)
+            except Exception:  # noqa: BLE001
+                hdr = self.elf._get_segment_header(i)
+                yield {k: hdr[k] for k in hdr.keys() if k != "p_type"} | {
+                    "p_type": SEGMENT_TYPE_NAMES.get(hdr["p_type"], hdr["p_type"])}
+
+    def iter_sections(self):
+        """遍历 section；单个 section 畸形（如加固改坏 .symtab）时跳过并记录。"""
+        for i in range(self.elf.num_sections()):
+            try:
+                yield self.elf.get_section(i)
+            except Exception as e:  # noqa: BLE001
+                if any(b["index"] == i for b in self.broken_sections):
+                    continue
+                hdr = self.elf._get_section_header(i)
+                self.broken_sections.append({
+                    "index": i, "type": hdr["sh_type"],
+                    "size": hdr["sh_size"], "entsize": hdr["sh_entsize"],
+                    "error": str(e),
+                })
+
+    def get_section_by_name(self, name):
+        for sec in self.iter_sections():
+            if sec.name == name:
+                return sec
+        return None
 
     def off2va(self, off):
         for s in self.loads:
@@ -223,7 +263,7 @@ class SOImage:
 
 def find_symbol(img, name):
     for sec_name in (".dynsym", ".symtab"):
-        sec = img.elf.get_section_by_name(sec_name)
+        sec = img.get_section_by_name(sec_name)
         if not sec:
             continue
         for sym in sec.iter_symbols():
@@ -259,26 +299,71 @@ def collect_info(img):
     info["type"] = eh["e_type"]
     info["entry"] = eh["e_entry"]
 
-    info["segments"] = [dict(s, raw_ok=s["vaddr"] == s["offset"]) for s in img.loads]
+    fsize = len(img.data)
+    info["segments"] = [dict(
+        s,
+        va_eq_off=(s["vaddr"] == s["offset"]),
+        in_file=(s["offset"] + s["filesz"] <= fsize),
+    ) for s in img.loads]
 
     info["sections"] = [{
         "name": s.name, "addr": s["sh_addr"], "offset": s["sh_offset"],
         "size": s["sh_size"], "flags": sec_flags(s),
-    } for s in img.elf.iter_sections()]
+    } for s in img.iter_sections()]
+    info["broken_sections"] = img.broken_sections
 
     needed, soname = [], None
-    dyn = img.elf.get_section_by_name(".dynamic")
+    dyn_entries = 0
+    dyn = img.get_section_by_name(".dynamic")
     if dyn is not None:
         for tag in dyn.iter_tags():
+            dyn_entries += 1
             if tag.entry.d_tag == "DT_NEEDED":
                 needed.append(tag.needed)
             elif tag.entry.d_tag == "DT_SONAME":
                 soname = tag.soname
+    else:
+        # 无 section header 时（壳破坏），从 PT_DYNAMIC 段读
+        for seg in img.iter_segments():
+            if seg["p_type"] != "PT_DYNAMIC":
+                continue
+            off, size = seg["p_offset"], seg["p_filesz"]
+            strtab_va, strsz, neededs, soname_idx = None, 0, [], None
+            pos = 0
+            while pos + 16 <= size:
+                tag, val = struct.unpack_from("<qQ", img.data, off + pos)
+                pos += 16
+                if tag == 0:
+                    break
+                dyn_entries += 1
+                if tag == 5:        # DT_STRTAB
+                    strtab_va = val
+                elif tag == 10:     # DT_STRSZ
+                    strsz = val
+                elif tag == 1:      # DT_NEEDED
+                    neededs.append(val)
+                elif tag == 14:     # DT_SONAME
+                    soname_idx = val
+            if strtab_va is not None:
+                str_off = img.va2off(strtab_va)
+                if str_off is not None:
+                    def _s(idx):
+                        e = img.data.find(b"\x00", str_off + idx)
+                        return img.data[str_off + idx:e].decode("utf-8", "replace")
+                    needed = [_s(i) for i in neededs]
+                    if soname_idx is not None:
+                        soname = _s(soname_idx)
+            else:
+                info["dyn_strtab_missing"] = True
+                info["dyn_needed_idxs"] = neededs
+                if soname_idx is not None:
+                    info["dyn_soname_idx"] = soname_idx
     info["needed"] = needed
     info["soname"] = soname
+    info["dyn_entries"] = dyn_entries
 
     exports, imports = [], []
-    dynsym = img.elf.get_section_by_name(".dynsym")
+    dynsym = img.get_section_by_name(".dynsym")
     if dynsym is not None:
         for sym in dynsym.iter_symbols():
             if not sym.name:
@@ -293,7 +378,7 @@ def collect_info(img):
     info["imports"] = imports
 
     counts, entries = {}, []
-    for s in img.elf.iter_sections():
+    for s in img.iter_sections():
         if not s.name.startswith(".rela"):
             continue
         for rel in s.iter_relocations():
@@ -313,13 +398,11 @@ def print_info_text(info, rx=None):
     print("  file=%s  class=%s  machine=%s  type=%s  entry=%#x"
           % (info["file"], info["class"], info["machine"], info["type"], info["entry"]))
     print()
-    print("== PT_LOAD segments (raw-map check) ==")
+    print("== PT_LOAD segments ==")
     for i, s in enumerate(info["segments"]):
-        print("  [%d] vaddr=%#010x offset=%#010x filesz=%#010x memsz=%#010x %-3s raw=%s"
+        print("  [%d] vaddr=%#010x offset=%#010x filesz=%#010x memsz=%#010x %-3s va_eq_off=%-5s in_file=%s"
               % (i, s["vaddr"], s["offset"], s["filesz"], s["memsz"], s["flags"],
-                 "YES" if s["raw_ok"] else "NO"))
-    if info["segments"] and all(s["raw_ok"] for s in info["segments"]):
-        print("  -> all vaddr==offset: use map_raw(); otherwise use map_elf()")
+                 str(s["va_eq_off"]).lower(), str(s["in_file"]).lower()))
     print()
     print("== Sections ==")
     for s in info["sections"]:
@@ -327,9 +410,27 @@ def print_info_text(info, rx=None):
             print("  %-12s addr=%#010x off=%#08x size=%#08x %s"
                   % (s["name"], s["addr"], s["offset"], s["size"], s["flags"]))
     print()
+    print("== ELF structure counts ==")
+    print("  section_headers: %d" % len(info["sections"]))
+    if info.get("broken_sections"):
+        print("  broken_sections: %d (malformed, skipped — typical of packers)"
+              % len(info["broken_sections"]))
+        for b in info["broken_sections"]:
+            print("    [%d] sh_type=%s size=%#x entsize=%d  %s"
+                  % (b["index"], b["type"], b["size"], b["entsize"], b["error"]))
+    print("  dynamic_entries: %d" % info["dyn_entries"])
+    print("  dynsym_defined: %d" % len(info["exports"]))
+    print("  dynsym_undef: %d" % len(info["imports"]))
+    print("  relocations: %d" % sum(info["relocations"]["counts"].values()))
+    print()
     print("== Dependencies ==")
     print("  SONAME: %s" % info["soname"])
     print("  NEEDED: %s" % " ".join(info["needed"]))
+    if info.get("dyn_strtab_missing"):
+        print("  dyn_strtab: absent (DT_STRTAB not in PT_DYNAMIC)")
+        print("  dyn_needed_idxs: %s" % ", ".join("%#x" % i for i in info.get("dyn_needed_idxs", [])))
+        if "dyn_soname_idx" in info:
+            print("  dyn_soname_idx: %#x" % info["dyn_soname_idx"])
     print()
 
     exports = info["exports"]
@@ -496,7 +597,7 @@ def cmd_disasm(img, args):
         if args.count and printed >= args.count:
             break
     if scanned == 0:
-        print("[-] nothing disassembled (bad offset/size?)")
+        print("[-] nothing disassembled (0 insns from 0x%x, %d bytes)" % (addr, size))
         return 1
     if rx and printed == 0:
         print("[i] no instruction matched --grep %r (%d scanned)" % (args.grep, scanned))
@@ -563,13 +664,13 @@ def cmd_strref(img, args):
     hits = scan_strrefs(img, targets)
     for t in targets:
         refs = hits.get(t, [])
-        body = ", ".join("0x%x (%s)" % (pc, kind) for pc, kind in refs) if refs else "(无)"
-        print("串 vaddr 0x%x: 被引用 @ %s" % (t, body))
+        body = ", ".join("0x%x (%s)" % (pc, kind) for pc, kind in refs) if refs else "(none)"
+        print("str 0x%x: referenced_by %s" % (t, body))
     if any(not hits.get(t) for t in targets):
         covered = ", ".join("%#x-%#x" % (s["vaddr"], s["vaddr"] + s["filesz"])
                             for s in img.exec_loads())
-        print('[i] covered: adr / adrp+add / adrp+ldr in X segments (%s); '
-              '可用 so.py disasm <so> --grep "adr|adrp" 复核' % covered)
+        print('[i] scanned: adr / adrp+add / adrp+ldr in X segments (%s); '
+              'recheck with: so.py disasm <so> --grep "adr|adrp"' % covered)
     return 0
 
 
@@ -615,7 +716,7 @@ def cmd_callers(img, args):
             kind = "tbz/tbnz"
         if tgt == target:
             callers.append((pc, kind))
-    print("目标 0x%x 被 %d 处跳转引用:" % (target, len(callers)))
+    print("target 0x%x: branch_refs=%d" % (target, len(callers)))
     for a, k in callers:
         print("  %-9s @ 0x%x" % (k, a))
     return 0
@@ -643,17 +744,16 @@ def cmd_svc(img, args):
             if m is not None:
                 nr = m
                 break
-        nm = SVC_NAMES.get(nr, "?") if nr is not None else "NOT-FOUND"
+        nm = SVC_NAMES.get(nr, "?") if nr is not None else "unknown"
         print("  svc @0x%x  nr=%s (%s)" % (pc, nr, nm))
         found.append((pc, nr, nm))
 
     print()
-    print("[+] %s: 共 %d 条 svc 指令" % (img.path, len(found)))
+    print("%s: svc_total=%d" % (img.path, len(found)))
 
     kill = [f for f in found if f[1] in (93, 94, 129, 130, 131)]
     if kill:
-        print()
-        print("[!] 发现 %d 条 kill/exit 相关 SVC（exit_blocker 无法拦截这些）:" % len(kill))
+        print("exit_like: %d" % len(kill))
         for pc, nr, nm in kill:
             print("    0x%x  nr=%s (%s)" % (pc, nr, nm))
     return 0
@@ -783,18 +883,19 @@ def cmd_jni(img, args):
 
     print("== JNI probe: %s (0x%x, %d bytes, %d insns) ==" % (label, addr, size, len(insns)))
     if not calls:
-        print("[-] no JNI call sites found (no JNI API used / env path not tracked / not a JNI export)")
+        print("call_sites: 0")
         return 1
     for c in calls:
         print("  0x%04x  %-24s x1=%-6s x2=%s" % (c["pc"], c["name"], c["x1"], c["x2"]))
+    print("call_sites: %d" % len(calls))
 
     found = infer_jni(calls)
     if found:
-        print("[+] Java arg#1 (JNI args[2]) type inference:")
+        print("derived_arg1_type:")
         for ptype, c in sorted(found.items()):
             print("    %-14s <- %s @0x%x (x1=arg2)" % (ptype, c["name"], c["pc"]))
     else:
-        print("[i] cannot attribute call sites to x1=arg2 (arg may travel via other regs/paths)")
+        print("derived_arg1_type: none (0 call sites with x1=arg2)")
     return 0
 
 
