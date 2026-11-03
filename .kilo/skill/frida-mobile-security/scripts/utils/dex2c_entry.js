@@ -48,7 +48,9 @@
     // 解析成功后是否直接 Interceptor.attach
     hook: false,
     // 只输出 ACC_NATIVE 方法；false 时可看到被回填成 Java 的方法（data_=0）
-    onlyNative: true
+    onlyNative: true,
+    // 扫描前等待毫秒数（避免与 ART JIT 并发读 ArtMethod 导致 SIGSEGV）；0 = 立即
+    delayMs: 3000
   });
 
   // ArtMethod 布局（Android 64 位，API 26+）
@@ -67,6 +69,39 @@
     var r = Process.findRangeByAddress(addr);
     if (r) return "anon " + r.base + "-" + r.base.add(r.size) + " " + r.protection;
     return "unmapped";
+  }
+
+  // ART quick entry 符号表：命中时给出可读名字，否则只给模块+偏移
+  var ART_ENTRY_SYMS = [
+    "art_quick_to_interpreter_bridge",
+    "art_quick_invoke_stub",
+    "art_quick_invoke_static_stub",
+    "art_quick_resolution_trampoline",
+    "art_quick_instrumentation_entry",
+    "art_quick_osr_stub",
+    "artQuickToInterpreterBridge",
+    "artQuickGenericJniTrampoline"
+  ];
+  var artSyms = null;
+
+  function resolveArtEntry(addr) {
+    if (!addr || addr.isNull()) return "";
+    if (!artSyms) {
+      artSyms = {};
+      var art = Process.findModuleByName("libart.so");
+      if (!art) return "";
+      try {
+        art.enumerateSymbols().forEach(function (s) {
+          if (s.address && ART_ENTRY_SYMS.indexOf(s.name) >= 0) {
+            artSyms[s.name] = s.address;
+          }
+        });
+      } catch (e) { }
+    }
+    for (var k in artSyms) {
+      if (artSyms[k].equals(addr)) return k;
+    }
+    return "";
   }
 
   function isExec(addr) {
@@ -168,6 +203,13 @@
       (isNative ? " native" : "") +
       "\n    data  = " + data + " -> " + where(data) +
       "\n    quick = " + quick + " -> " + where(quick);
+    var qsym = resolveArtEntry(quick);
+    if (qsym) line += " (" + qsym + ")";
+
+    // 无 data_（非 native）且 quick 指向解释器桥：方法体不在 DEX 层
+    if (!isNative && data.isNull() && qsym && /interpreter/i.test(qsym)) {
+      line += "\n    body  = not in DEX (dex2c/vmp); dump 内存 dex 取不到该方法的 insns";
+    }
 
     if (CONFIG.showBytes > 0 && !data.isNull() && isExec(data)) {
       try {
@@ -246,7 +288,17 @@
       U.ok("[i] 不需要在 native 注册时在场，attach 场景可用");
       return;
     }
-    CONFIG.classes.forEach(scanClass);
-    U.ok("[done]");
+    // ArtMethod 读取与 ART JIT 并发会触发 SIGSEGV（art::ArtMethod::PrettyMethod），
+    // 默认等 App 启动稳定后再扫；CONFIG.delayMs=0 可立即扫。
+    var go = function () {
+      CONFIG.classes.forEach(scanClass);
+      U.ok("[done]");
+    };
+    if (CONFIG.delayMs > 0) {
+      U.ok("[i] delay " + CONFIG.delayMs + "ms before scanning ArtMethod");
+      setTimeout(go, CONFIG.delayMs);
+    } else {
+      go();
+    }
   });
 })(this);
