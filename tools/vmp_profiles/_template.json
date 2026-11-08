@@ -1,0 +1,87 @@
+{
+  "_README": [
+    "字节码 VM / VMP 壳的编码模型（profile）。由 `python3 tools/vmp.py profile new <name>` 复制而来。",
+    "填法：每个字段的 _comment 里写了「怎么从二进制得到这个值」。",
+    "分组：[engine] 是 disasm/verify 必需；[trace] 是 trace 子命令必需；[opt] 可选。",
+    "验证顺序：填完 engine → 跑 verify（命中率必须 > 95%）→ 再补 trace 字段。",
+    "参考实例：<包名>/tools/vm_profiles/<壳名>.json"
+  ],
+  "name": "TODO-改名成你的壳名",
+  "description": "TODO 一句话：哪个壳 / 哪个 so / 什么特征",
+  "_engine_comment": "===== 以下 [engine]：disasm 与 verify 必需 =====",
+  "key_xor": "0x0",
+  "_key_xor_comment": "[engine] key 的异或常量（链式差分的常数项）。取法：反编译 handler 的取指代码，找 opcode 计算里的 xor 立即数。多个 handler 交叉验证同一个值。",
+  "decode": {
+    "sub_hi": 0,
+    "mask_hi": 0,
+    "sub_lo": 0,
+    "mask_lo": 0
+  },
+  "_decode_comment": "[engine] 单字节解码常量。公式固定：((sub_hi - x) & mask_hi) | ((x - sub_lo) & mask_lo)。取法：handler 里把字节变成 opcode 的那几条指令，通常是 sub + and + or（或 bfm/bfi）。四个数字都从反汇编立即数直接读。",
+  "handler_table_file_va": "0x0",
+  "_handler_table_file_va_comment": "[engine] opcode 跳转表的文件偏移（vaddr==offset 时即 ELF VA）。取法：python3 tools/ptr_table.py <so> --scan --only-code --classify vm，找标『handler 表候选』的那张。",
+  "handler_count": 0,
+  "_handler_count_comment": "[engine] 表项数。不要假设 256。取法二选一：① 表后紧邻的下一张表起点 − 本表起点；② 解释器入口 memcpy(dst, table, N) 的 N。两个结果应一致。",
+  "bytecode_file_va": "0x0",
+  "_bytecode_file_va_comment": "[engine] 字节码区起始的文件偏移。取法：反编译调用解释器的那个函数，第 3 个参数是字节码指针，看 adrp+add 算出地址。",
+  "opcodes": {
+    "0x00": "op_00"
+  },
+  "operand_layout": {
+    "none": [
+      "0x00"
+    ],
+    "u16x4": [
+      "0x30"
+    ],
+    "u16": [
+      "0x4E"
+    ],
+    "u8": [
+      "0x4D"
+    ],
+    "u32": [
+      "0x32"
+    ],
+    "u64": [
+      "0x33"
+    ],
+    "idx8": [
+      "0x8B"
+    ]
+  },
+  "_operand_layout_comment": "[engine] opcode -> 操作数宽度分类。不填则用内置默认值（只对某个已解出的壳成立），换壳必须填，否则 disasm 的 operand 列系统性错、而 verify 仍通过（它只校验 opcode 链）。取法：逐 handler 反编译，看它从 body 里读几个字节、按什么宽度。kind 可选：none / u8 / u16 / u32 / u64 / u16x4（u16 值 ×4 当帧偏移）/ idx8（8 位索引）。",
+  "_opcodes_comment": "[engine] opcode → 语义名。先全填 op_<hex> 占位，跑通 verify 后逐个反编译 handler 补真名。条目数必须 >= handler_count；超出的部分是错的（会把 continuation 表误当 opcode）。",
+  "handler_table_va": "0x0",
+  "_handler_table_va_comment": "[opt] 运行时 VA（若与文件偏移不同则填）。VM 解释器里 ldr 用的基址。",
+  "bytecode_size": 0,
+  "_bytecode_size_comment": "[opt] 字节码区大小，用于越界保护。",
+  "static_insn_len": 3,
+  "_static_insn_len_comment": "[opt] 无 trace 时退化反汇编用的固定长度。多数变长 VM 的众数长度（3 或 5）。有 trace 时不用。",
+  "forced_key": null,
+  "_forced_key_comment": "[opt] 『条件满足时 key 被强制』的分支。形如 {\"value\": \"0x3b\", \"when\": \"op in [...] and byte[2]==0x3b\"}。verify 报未命中但能归因到这个分支时填。",
+  "_trace_comment": "===== 以下 [trace]：vmp.py trace 必需 =====",
+  "entry_va": "0x0",
+  "_entry_va_comment": "[trace] **解释器入口**的 ELF VA，不是 JNI_OnLoad 本身。取法：反编译 JNI_OnLoad，找它内部调用的那个函数（形态 rt→vm→FUN_zzz(rt,&tbl1,&tbl2,bytecode,&selector,0)），FUN_zzz 就是入口。vmp.py trace 会以 (JavaVM*, selector) 调用它。填 JNI_OnLoad 的地址会跑飞，表现像仿真环境问题。",
+  "entry_takes_selector": true,
+  "_entry_takes_selector_comment": "[trace] 入口第 2 参是否就是 selector 索引。多数 VM 是 (vm, selector)，少数只有 (vm)。",
+  "dispatch_hook_pc": "0x0",
+  "_dispatch_hook_pc_comment": "[trace] dispatch 循环里 `ldr xN,[tbl, xIdx, lsl#3]` 的**前一条**指令地址。取法：反编译 dispatch，找这条 ldr，取它上一条指令的地址。hook 在这一条时，pc/idx/key 三个值都已写到栈上。",
+  "selector_hook_pc": "0x0",
+  "_selector_hook_pc_comment": "[trace] 需要覆盖 selector 时 hook 的地址（通常是读 selector 参数的那条指令）。只在 --sel 非 0 时生效；多数情况留 0x0 即可。",
+  "selector_arg_reg": "x5",
+  "_selector_arg_reg_comment": "[trace] selector 由哪个寄存器传入。取法：反编译 dispatch，看 selector 表索引来自哪个寄存器。",
+  "frame_pc_off": "0x0",
+  "_frame_pc_off_comment": "[trace] dispatch 把『当前 pc』存在 [sp+该偏移]。取法：反编译 dispatch，找存 pc 的 str 指令。",
+  "frame_idx_off": "0x0",
+  "_frame_idx_off_comment": "[trace] dispatch 把『opcode 索引』存在 [sp+该偏移]（1 字节）。取法同上。",
+  "frame_key_off": "0x0",
+  "_frame_key_off_comment": "[trace] dispatch 把『当前 key』存在 [sp+该偏移]（1 字节）。取法同上。",
+  "_env_comment": "===== 以下 [opt]：仿真环境 =====",
+  "stack_size": "0x100000",
+  "_stack_size_comment": "[opt] 仿真栈大小。VM 解释器栈帧很大，64 KB 常不够（会写穿栈底 → WRITE_UNMAPPED）。先给 0x100000，报错再加倍。",
+  "arena_presize": "0x0",
+  "_arena_presize_comment": "[opt] 预扩 Harness arena 的字节数。VM 会 mmap 帧/表副本，按需扩页跟不上时填（如 0x300000）。",
+  "vm_instances": {},
+  "_vm_instances_comment": "[opt] 同一引擎的多套 VM（不同字节码区/selector）。形如 {\"A\": {\"tbl1\": \"0x..\", \"tbl2\": \"0x..\"}}。仅用于记录，引擎不读。"
+}

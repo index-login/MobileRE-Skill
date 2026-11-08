@@ -63,6 +63,8 @@ def parse_args_tokens(tokens, h, env_addr=None):
             out.append(0)
         elif t == "env":
             out.append(env_addr or 0)
+        elif t in ("vm", "javavm"):
+            out.append(getattr(h, "jni_vm", 0) or 0)
         else:
             out.append(int(t, 0))
     return out
@@ -538,6 +540,38 @@ def make_libc_stubs(h, extra, overrides=None, tracer=None):
     def _noop(uc, addr, size, user):
         pass
 
+    # --- 运行时分配 / TLS 桩：缺了会让 pthread/mmap 型初始化直接写 0 地址 ---
+    _tls_slot = {}
+
+    def cb_sysconf(uc, addr, size, user):
+        # _SC_PAGESIZE(0x1e) 等一律返回 4096（页大小）
+        uc.reg_write(reg("x0"), 0x1000)
+
+    def cb_mmap(uc, addr, size, user):
+        want = uc.reg_read(reg("x1")) or 0x1000
+        uc.reg_write(reg("x0"), h.alloc(want, align=0x1000))
+
+    def cb_munmap(uc, addr, size, user):
+        uc.reg_write(reg("x0"), 0)                   # 成功
+
+    def cb_pthread_getspecific(uc, addr, size, user):
+        uc.reg_write(reg("x0"), _tls_slot.get(uc.reg_read(reg("x0")), 0))
+
+    def cb_pthread_setspecific(uc, addr, size, user):
+        key, val = uc.reg_read(reg("x0")), uc.reg_read(reg("x1"))
+        # 只接受 arena 内的指针，避免把桩地址当成运行时结构
+        if 0x10000000 <= val < 0x20000000:
+            _tls_slot[key] = val
+        else:
+            _tls_slot.pop(key, None)
+        uc.reg_write(reg("x0"), 0)
+
+    def cb_pthread_key_create(uc, addr, size, user):
+        kp = uc.reg_read(reg("x0"))
+        if kp:
+            uc.mem_write(kp, struct.pack("<I", 1))
+        uc.reg_write(reg("x0"), 0)
+
     _warned = set()
 
     def _unknown_for(name):
@@ -564,7 +598,10 @@ def make_libc_stubs(h, extra, overrides=None, tracer=None):
         "pthread_mutex_lock": cb_ret0, "pthread_mutex_unlock": cb_ret0,
         "pthread_mutex_init": cb_ret0, "pthread_mutex_destroy": cb_ret0,
         "pthread_once": cb_ret0, "pthread_self": cb_ret1,
-        "pthread_key_create": cb_ret0, "pthread_setspecific": cb_ret0,
+        "pthread_key_create": cb_pthread_key_create,
+        "pthread_getspecific": cb_pthread_getspecific,
+        "pthread_setspecific": cb_pthread_setspecific,
+        "sysconf": cb_sysconf, "mmap": cb_mmap, "munmap": cb_munmap,
         "getenv": cb_ret0, "__errno": cb_ret0,
         "dlopen": cb_ret1, "dlclose": cb_ret0, "dlsym": cb_ret0, "dlerror": cb_ret0,
         "__android_log_print": cb_ret0, "__android_log_write": cb_ret0,
@@ -638,6 +675,135 @@ def data_import_slot(h, name):
     return cell
 
 
+def _load_segments(path):
+    """按 PT_LOAD 返回 [(file_off, vaddr, filesz, memsz, flags)]。
+
+    脱壳镜像的 section header 常被壳伪造/抹掉，所以这里只信 program header。
+    """
+    with open(path, "rb") as f:
+        data = f.read()
+    if data[:4] != b"\x7fELF" or data[4] != 2:
+        return []
+    e_phoff = struct.unpack_from("<Q", data, 0x20)[0]
+    e_phentsize = struct.unpack_from("<H", data, 0x36)[0]
+    e_phnum = struct.unpack_from("<H", data, 0x38)[0]
+    out = []
+    for i in range(e_phnum):
+        o = e_phoff + i * e_phentsize
+        p_type, p_flags = struct.unpack_from("<II", data, o)
+        if p_type != 1:                       # PT_LOAD
+            continue
+        p_off, p_va, _pa, p_filesz, p_memsz, _al = struct.unpack_from(
+            "<QQQQQQ", data, o + 8)
+        out.append((p_off, p_va, p_filesz, p_memsz, p_flags))
+    return out
+
+
+def _parse_dynamic(data):
+    """从 PT_DYNAMIC 读 (tag -> value)。返回 {} 表示没有动态段。"""
+    e_phoff = struct.unpack_from("<Q", data, 0x20)[0]
+    e_phentsize = struct.unpack_from("<H", data, 0x36)[0]
+    e_phnum = struct.unpack_from("<H", data, 0x38)[0]
+    dyn = None
+    for i in range(e_phnum):
+        o = e_phoff + i * e_phentsize
+        if struct.unpack_from("<I", data, o)[0] == 2:      # PT_DYNAMIC
+            dyn = (struct.unpack_from("<Q", data, o + 8)[0],
+                   struct.unpack_from("<Q", data, o + 32)[0])
+            break
+    if dyn is None:
+        return {}
+    tags = {}
+    o = dyn[0]
+    while o < dyn[0] + dyn[1]:
+        tag, val = struct.unpack_from("<qQ", data, o)
+        if tag == 0:
+            break
+        tags[tag] = val
+        o += 16
+    return tags
+
+
+def _relocation_offsets(path):
+    """列出所有重定位目标地址（用于避免中和时覆盖刚写好的桩）。"""
+    with open(path, "rb") as f:
+        data = f.read()
+    tags = _parse_dynamic(data)
+    if not tags:
+        return set()
+    out = set()
+
+    def _walk(off, size):
+        for k in range(size // 24):
+            p = off + k * 24
+            if p + 24 > len(data):
+                break
+            r_offset = struct.unpack_from("<Q", data, p)[0]
+            out.add(r_offset)
+
+    if 7 in tags and 8 in tags:                # DT_RELA / DT_RELASZ
+        _walk(tags[7], tags[8])
+    if 23 in tags and 2 in tags:               # DT_JMPREL / DT_PLTRELSZ
+        _walk(tags[23], tags[2])
+    return out
+
+
+def clear_runtime_bss(h, path):
+    """清零 .bss 里残留的运行时内容（脱壳镜像特有）。
+
+    内存 dump 会把上一进程写进 .bss 的内容一起 dump 下来（壳的运行时标志位、
+    指针），仿真时必须清零，否则会被当成有效状态。
+
+    判据：PT_LOAD 且 W，非零字节占比 < 5% 视为 .bss 快照（真实 .data 占比高）。
+    返回清零的字节数。
+    """
+    with open(path, "rb") as f:
+        data = f.read()
+    cleared = 0
+    for p_off, p_va, filesz, memsz, flags in _load_segments(path):
+        if not (flags & 0x2):                 # 只看可写段
+            continue
+        if filesz:
+            chunk = data[p_off:p_off + filesz]
+            nz = sum(1 for x in chunk if x)
+            if nz / max(len(chunk), 1) < 0.05:
+                h.write(p_va, b"\x00" * filesz)
+                cleared += filesz
+        if memsz > filesz:                    # 真 BSS 尾部
+            h.write(p_va + filesz, b"\x00" * (memsz - filesz))
+            cleared += memsz - filesz
+    return cleared
+
+
+def neutralize_runtime_ptrs(h, path, lo=0x7800000000, hi=0x7900000000,
+                            skip=(), stub=None):
+    """把 .rodata/.data 里残留的运行时指针改指向一个 ret 桩。
+
+    脱壳镜像里这类值是上一进程的 libc/堆地址（如 0x78aa...），仿真时
+    跳过去必然 UC_ERR_FETCH_UNMAPPED。它们不在重定位表里，只能扫描中和。
+
+    skip: 需排除的 VA（重定位槽 —— 那里刚写好的桩不能被覆盖）。
+    返回中和的指针个数。
+    """
+    with open(path, "rb") as f:
+        data = f.read()
+    skip = set(skip)
+    if stub is None:
+        stub = h.stub()
+    hits = 0
+    for p_off, p_va, filesz, _memsz, _flags in _load_segments(path):
+        for off in range(p_off, p_off + filesz - 8, 8):
+            v = struct.unpack_from("<Q", data, off)[0]
+            if not (lo <= v <= hi):
+                continue
+            va = p_va + (off - p_off)
+            if va in skip:
+                continue
+            h.write(va, struct.pack("<Q", stub))
+            hits += 1
+    return hits
+
+
 def apply_relocations(h, path, stubs):
     """Loader-correct relocation pass:
 
@@ -645,33 +811,95 @@ def apply_relocations(h, path, stubs):
     - defined symbol -> st_value + r_addend (fixes R_AARCH64_ABS64 addend, e.g. RTTI vtables)
     - undefined JUMP_SLOT -> function stub (builtin libc impl or ret-0)
     - undefined GLOB_DAT  -> data slot (writable data, NOT a code stub; see data_import_slot)
+
+    重定位表来源优先走 PT_DYNAMIC（DT_RELA/DT_JMPREL）：脱壳镜像的 section
+    header 常被壳伪造，pyelftools 的 section API 会读到空表或直接报错。
+    只有在 PT_DYNAMIC 里拿不到时才回退到 section。
     """
-    from elftools.elf.elffile import ELFFile
     R_RELATIVE, R_IRELATIVE, R_GLOB_DAT = 1027, 1032, 1025
     undef_fn, undef_data = {}, {}
+
     with open(path, "rb") as f:
-        elf = ELFFile(f)
-        for sec_name in (".rela.plt", ".rela.dyn"):
-            sec = elf.get_section_by_name(sec_name)
-            if not sec:
+        data = f.read()
+    tags = _parse_dynamic(data)
+    relocs = []
+    if tags:
+        strtab = tags.get(5, 0)
+        symtab = tags.get(6, 0)
+        symsz = tags.get(11, 24)
+
+        def _sym_name(idx):
+            base = symtab + idx * symsz
+            if base + symsz > len(data):
+                return ""
+            st_name = struct.unpack_from("<I", data, base)[0]
+            p = strtab + st_name
+            e = data.find(b"\x00", p)
+            if e < 0:
+                return ""
+            return data[p:e].decode("utf-8", "replace")
+
+        def _walk(off, size):
+            for k in range(size // 24):
+                p = off + k * 24
+                if p + 24 > len(data):
+                    break
+                r_offset, r_info, r_addend = struct.unpack_from("<QQq", data, p)
+                relocs.append((r_offset, r_info & 0xFFFFFFFF,
+                               r_info >> 32, r_addend))
+
+        if 7 in tags and 8 in tags:            # DT_RELA / DT_RELASZ
+            _walk(tags[7], tags[8])
+        if 23 in tags and 2 in tags:           # DT_JMPREL / DT_PLTRELSZ
+            _walk(tags[23], tags[2])
+
+    if relocs:
+        for r_offset, rtype, symidx, r_addend in relocs:
+            if rtype in (R_RELATIVE, R_IRELATIVE):
+                # 畸形镜像里 addend 可能是负数（符号扩展未清零），按 u64 截断写回
+                h.write(r_offset, struct.pack("<Q", r_addend & 0xFFFFFFFFFFFFFFFF))
                 continue
-            symtab = elf.get_section(sec["sh_link"])
-            for rel in sec.iter_relocations():
-                rtype = rel["r_info_type"]
-                if rtype in (R_RELATIVE, R_IRELATIVE):
-                    h.write(rel["r_offset"], struct.pack("<Q", rel["r_addend"]))
-                    continue
-                symidx = rel["r_info_sym"]
-                if not symidx:
-                    continue
-                sym = symtab.get_symbol(symidx)
-                if sym["st_shndx"] == "SHN_UNDEF":
-                    if rtype == R_GLOB_DAT:
-                        undef_data[rel["r_offset"]] = sym.name
-                    else:
-                        undef_fn[rel["r_offset"]] = sym.name
+            if not symidx:
+                continue
+            name = _sym_name(symidx)
+            # st_shndx 需要看符号表项；用 st_value==0 近似判定"未定义"
+            base = tags.get(6, 0) + symidx * tags.get(11, 24)
+            st_value = struct.unpack_from("<Q", data, base + 8)[0] if base + 16 <= len(data) else 0
+            if st_value == 0:
+                if rtype == R_GLOB_DAT:
+                    undef_data[r_offset] = name
                 else:
-                    h.write(rel["r_offset"], struct.pack("<Q", sym["st_value"] + rel["r_addend"]))
+                    undef_fn[r_offset] = name
+            else:
+                h.write(r_offset, struct.pack(
+                    "<Q", (st_value + r_addend) & 0xFFFFFFFFFFFFFFFF))
+    else:
+        # 回退：PT_DYNAMIC 不可用时才走 section（正常 SO 走这里也没问题）
+        from elftools.elf.elffile import ELFFile
+        with open(path, "rb") as f:
+            elf = ELFFile(f)
+            for sec_name in (".rela.plt", ".rela.dyn"):
+                sec = elf.get_section_by_name(sec_name)
+                if not sec:
+                    continue
+                symtab = elf.get_section(sec["sh_link"])
+                for rel in sec.iter_relocations():
+                    rtype = rel["r_info_type"]
+                    if rtype in (R_RELATIVE, R_IRELATIVE):
+                        h.write(rel["r_offset"], struct.pack("<Q", rel["r_addend"]))
+                        continue
+                    symidx = rel["r_info_sym"]
+                    if not symidx:
+                        continue
+                    sym = symtab.get_symbol(symidx)
+                    if sym["st_shndx"] == "SHN_UNDEF":
+                        if rtype == R_GLOB_DAT:
+                            undef_data[rel["r_offset"]] = sym.name
+                        else:
+                            undef_fn[rel["r_offset"]] = sym.name
+                    else:
+                        h.write(rel["r_offset"], struct.pack("<Q", sym["st_value"] + rel["r_addend"]))
+
     warned = set()
 
     def _unstubbed(name):
@@ -921,7 +1149,52 @@ def build_jni(h, default_cb, jni_log=None, tracer=None, dumper=None):
         slots = {i: tracer.wrap(jni_name(i), cb, tracer.JNI_REGS) for i, cb in slots.items()}
     if jni_log is not None:
         slots = {i: jni_log.wrap(i, cb) for i, cb in slots.items()}
-    return h.jni_env(slots=slots)
+    env_addr = h.jni_env(slots=slots)
+    h.jni_vm = _build_java_vm(h, env_addr, default_cb)
+    # 挂到 Harness 上：--setup 里的 prepare() 建完 JNI 后，主流程要能拿到同一个
+    # env，否则会重复建一套表，--args env 指向的就不是 prepare 建的那个。
+    h.jni_env_addr = env_addr
+    return env_addr
+
+
+#: JNIInvokeInterface 的槽位（Android 10 / ART）
+#: 7=GetEnv 8=AttachCurrentThread 9=DetachCurrentThread
+JNI_VM_GETENV = 7
+
+
+def _build_java_vm(h, env_addr, default_cb):
+    """构造二级 JavaVM 表，返回 JavaVM*。
+
+    为什么需要：`JNI_OnLoad(JavaVM* vm, void* reserved)` 的第 1 参就是它，
+    而壳普遍会调 `(*vm)->GetEnv(vm, &env, ver)` 取 JNIEnv。
+    只造 JNIEnv 而把 vm 传 0，会让 GetEnv 读 [0+0x38] 落到 ELF 头，
+    得到 0x00380040 之类的垃圾指针，表现为诡异的 FETCH_UNMAPPED。
+    """
+    from unicorn.arm64_const import UC_ARM64_REG_X0, UC_ARM64_REG_X1
+
+    vm_addr = h.alloc(8)
+    vm_tbl = h.alloc(16 * 8)
+    h.write(vm_addr, struct.pack("<Q", vm_tbl))
+    for i in range(16):
+        h.write(vm_tbl + i * 8, struct.pack("<Q", h.stub(default_cb)))
+
+    def cb_get_env(uc, addr, size, user):
+        """jint GetEnv(JavaVM*, void** penv, jint version) -> JNI_OK(0), *penv=env"""
+        penv = uc.reg_read(UC_ARM64_REG_X1)
+        if penv:
+            uc.mem_write(penv, struct.pack("<Q", env_addr))
+        uc.reg_write(UC_ARM64_REG_X0, 0)
+
+    def cb_attach(uc, addr, size, user):
+        """jint AttachCurrentThread(JavaVM*, void** penv, void* args) -> *penv=env"""
+        penv = uc.reg_read(UC_ARM64_REG_X1)
+        if penv:
+            uc.mem_write(penv, struct.pack("<Q", env_addr))
+        uc.reg_write(UC_ARM64_REG_X0, 0)
+
+    h.write(vm_tbl + JNI_VM_GETENV * 8, struct.pack("<Q", h.stub(cb_get_env)))
+    h.write(vm_tbl + 8 * 8, struct.pack("<Q", h.stub(cb_attach)))
+    return vm_addr
 
 
 def hexdump(data, base):
@@ -1083,6 +1356,9 @@ def main():
     ap.add_argument("--raw", action="store_true")
     ap.add_argument("--no-init", action="store_true",
                     help="不执行 DT_INIT/DT_INIT_ARRAY（默认执行，用于初始化 C++ 全局对象）")
+    ap.add_argument("--no-clean-image", action="store_true",
+                    help="不清理脱壳镜像残留（.bss 运行时快照 / .rodata 里的运行时指针）。"
+                         "默认清理：脱壳产物不清会被上一进程的状态污染")
     ap.add_argument("--no-syscalls", action="store_true",
                     help="不装 syscall 层（默认装：给直接 svc #0 的 .so 兜底）")
     ap.add_argument("--ret-str", action="store_true",
@@ -1136,13 +1412,53 @@ def main():
             print("[-] need --sym or --off")
             return 1
 
+        # 脱壳镜像清理：.bss 运行时快照必须先清零（真实 .data 不受影响）
+        if not args.no_clean_image:
+            n = clear_runtime_bss(h, args.so)
+            if n:
+                print("[i] bss cleared: %d bytes" % n, flush=True)
+
         # loader-correct relocations (RELATIVE / defined GLOB_DAT first, then import stubs)
         extra = [x for x in args.imp.split(",") if x]
         extra += [n for n in overrides if n not in extra]
         libc_stubs = make_libc_stubs(h, extra, overrides, tracer)
         apply_relocations(h, args.so, libc_stubs)
 
-        env = build_jni(h, _ret0, jni_log=jni_log, tracer=tracer, dumper=dump_fh) if args.jni else None
+        # 运行时指针快照（脱壳镜像残留的上一进程地址）-> ret 桩。
+        # 排除重定位槽：那里刚写好的桩不能被覆盖。
+        if not args.no_clean_image:
+            n = neutralize_runtime_ptrs(h, args.so,
+                                        skip=_relocation_offsets(args.so))
+            if n:
+                print("[i] runtime ptr snapshots neutralized: %d" % n, flush=True)
+
+        # setup 必须在 build_jni 之前：prepare() 会自己造 JNI/JavaVM 表并返回 vm，
+        # 之后 --args 才能解析 "vm" / "env" 两个记号。
+        env = None
+        if args.setup:
+            # setup 脚本有两种契约，都接受：
+            #   setup(h)                      —— 只要挂环境
+            #   prepare(h, so_path, data)     —— 与 probe_layout / vmp trace 统一
+            # prepare 的返回值（通常是 JavaVM*）写进 h.jni_vm，供 --args vm 使用。
+            ns = {"__file__": os.path.abspath(args.setup), "__name__": "__emu_setup__"}
+            exec(compile(open(args.setup, encoding="utf-8").read(), args.setup, "exec"), ns)  # noqa: S102
+            if "prepare" in ns:
+                with open(args.so, "rb") as _f:
+                    _data = _f.read()
+                ret = ns["prepare"](h, args.so, _data)
+                if ret:
+                    h.jni_vm = ret[0] if isinstance(ret, tuple) else ret
+                # 注意：h.jni_env 是 Harness 的方法，不是地址；只能读 jni_env_addr
+                env = getattr(h, "jni_env_addr", None)
+            elif "setup" in ns:
+                ns["setup"](h)
+            else:
+                print("[-] %s 里没有 setup(h) 或 prepare(h, so_path, data)" % args.setup)
+                return 1
+
+        # setup 没给 env 时才自建（避免覆盖 prepare 已建好的两级表）
+        if args.jni and env is None:
+            env = build_jni(h, _ret0, jni_log=jni_log, tracer=tracer, dumper=dump_fh)
         call_args = parse_args_tokens(args.args.split(",") if args.args else [], h, env)
 
         for poke in args.poke:
@@ -1154,11 +1470,6 @@ def main():
         for spec in args.poke_str:
             addr_s, text = spec.split("=", 1)
             h.write(int(addr_s, 0), text.encode("utf-8"))
-
-        if args.setup:
-            ns = {"__file__": os.path.abspath(args.setup), "__name__": "__emu_setup__"}
-            exec(compile(open(args.setup, encoding="utf-8").read(), args.setup, "exec"), ns)  # noqa: S102
-            ns["setup"](h)
 
         if not args.no_init:
             n_init = run_init(h, args.so)
