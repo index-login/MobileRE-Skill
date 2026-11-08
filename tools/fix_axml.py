@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-fix_axml.py - 爱加密 AXML 魔改 Manifest 修复工具
+fix_axml.py - 魔改 AXML Manifest 修复工具
 
-背景：爱加密加固会在 AndroidManifest.xml (AXML) 的第一个 chunk header 后
+背景：部分加固厂商会在 AndroidManifest.xml (AXML) 的第一个 chunk header 后
 插入 4 字节填充 (00 00 00 00)，并把 headerSize 谎报为 0x000C (标准 0x0008)。
 数据流自洽 → aapt/系统可解析，但 jadx/apktool 强制校验 0x00080003 报错拒绝。
 
@@ -28,7 +28,7 @@ import zipfile
 
 
 def detect_axml_magic(data):
-    """检测是否为爱加密魔改 AXML：首 chunk headerSize=0x000C + 8-11 为填充 + 12 处为 string pool"""
+    """检测是否为魔改 AXML：首 chunk headerSize=0x000C + 8-11 为填充 + 12 处为 string pool"""
     if len(data) < 16:
         return False
     if data[0:2] != b'\x03\x00':
@@ -73,7 +73,7 @@ def human(n):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="修复爱加密魔改 AXML (AndroidManifest.xml)")
+    ap = argparse.ArgumentParser(description="修复魔改 AXML (AndroidManifest.xml)")
     ap.add_argument("-i", "--input", required=True, help="输入 APK 或 AXML 文件")
     ap.add_argument("-o", "--output", help="输出文件（不填则打印检测结果）")
     ap.add_argument("-e", "--entry", default="AndroidManifest.xml", help="APK 内目标 entry（默认 AndroidManifest.xml）")
@@ -95,10 +95,10 @@ def main():
     print(f"    header: {data[:8].hex()}")
 
     if not detect_axml_magic(data):
-        print("[-] 未检测到爱加密魔改特征（headerSize!=0x000C 或结构不符），跳过")
+        print("[-] 未检测到魔改特征（headerSize!=0x000C 或结构不符），跳过")
         sys.exit(0)
 
-    print("[+] 检测到爱加密 AXML 魔改：headerSize=0x000C + 4字节填充")
+    print("[+] 检测到 AXML 魔改：headerSize=0x000C + 4字节填充")
     if args.check:
         print("[*] --check 模式，不输出")
         sys.exit(0)

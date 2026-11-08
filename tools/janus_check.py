@@ -2,7 +2,7 @@
 """
 janus_check.py - Janus 漏洞 (CVE-2017-13156) 备选检测
 
-用途：check-janus.bat 的 GetAPKInfo.jar 无法解析 APK（爱加密等加固魔改
+用途：check-janus.bat 的 GetAPKInfo.jar 无法解析 APK（加固魔改
 AndroidManifest AXML）时的备选方案。效果与 GetAPKInfo.jar 对齐：
 输出 V1/V2/V3 签名方案使用与验证状态 + Janus 结论。
 

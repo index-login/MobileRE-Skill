@@ -47,7 +47,7 @@
 
 - 🧠 **Agent 大脑**（`.kilo/agent/reverser.md`）— 逆向分析角色定义，按决策树自动选模块
 - 📚 **领域知识**（`references/` 项目级 wiki + `.kilo/skill/`）— 9 大技巧域手册（全量索引 `_index.md`）+ 动态分析总控 + Native 深度能力（符号/结构恢复、离线模拟执行、内存 DEX 脱壳）
-- 🔧 **能力单元**（`scripts/`）— 25 个 Frida 模块（monitors 15 + bypass 10）+ 22 个独立工具 + 检测清单
+- 🔧 **能力单元**（`scripts/`）— 31 个 Frida 模块（monitors 19 + bypass 12）+ 26 个独立工具 + 检测清单
 - 🛠️ **合规检测** — 注入、调试、WebView SSL、APK 元数据/签名
 - 🔌 **MCP 集成**（`kilo.json`）— jadx-mcp（Java 反编译）+ ghidra-mcp（二进制分析）
 
@@ -74,13 +74,14 @@
 │  feedback/FEEDBACK.md     — agent 级反馈闭环（项目根）       │
 ├────────────────────────────────────────────────────────────┤
 │               Frida 动态 Hook 模块（skill scripts/）        │
-│  monitors/ (15 个) — 纯观察，不修改行为                     │
-│  bypass/   (10 个) — 主动干预，修改 app 行为                │
+│  monitors/ (19 个) — 纯观察，不修改行为                     │
+│  bypass/   (12 个) — 主动干预，修改 app 行为                │
 │  utils/            — 内存 dump / 运行时 JS 工具             │
 ├────────────────────────────────────────────────────────────┤
 │               独立工具（项目根 tools/）                      │
 │  so.py · unpack · dex_* · frida_run · device_ui             │
-│  emu_run · trace_recon · cipher_lab · fsmon_run · 检测      │
+│  emu_run · vmp · so_ledger · ptr_table · probe_layout       │
+│  trace_recon · cipher_lab · fsmon_run · 检测                │
 ├────────────────────────────────────────────────────────────┤
 │               MCP 集成（kilo.json 配置）                    │
 │  jadx-mcp  — AI 直接读 Java 源码反编译                      │
@@ -125,14 +126,14 @@ MobileRE-Skill/
 │       │   ├── SKILL.md             # 总控：任务路由 + 决策树 + 模块目录
 │       │   └── scripts/             # Frida JS 模块（由 frida -l 加载）
 │       │       ├── core/utils.js        # 公共工具（始终首个加载）
-│       │       ├── monitors/            # 15 个监控模块（纯观察）
-│       │       ├── bypass/              # 10 个干预模块（反检测等）
+│       │       ├── monitors/            # 19 个监控模块（纯观察）
+│       │       ├── bypass/              # 12 个干预模块（反检测等）
 │       │       ├── utils/               # 内存 dump JS（so_dump / dex_* / codeitem）
 │       │       ├── checklist/           # 检测清单脚本
 │       │       └── templates/           # 模板（analysis.py / custom_hook.js）
 │       ├── func-naming/             # 无符号函数命名（符号表/魔数/调用模式）
-│       ├── rev-struct/              # 结构体恢复（偏移访问聚合）
-│       ├── rev-unicorn-debug/       # Unicorn 模拟调试（工具在 tools/）
+│       ├── so-emulate/              # 单函数离线仿真（Unicorn，工具在 tools/）
+│       ├── so-function-recovery/    # 大型 SO 函数级还原流水线（台账/边界/VM 编码）
 │       ├── dex-mem-dump/            # 运行时 DEX 脱壳（panda + mem，ptrace-free）
 │       └── karpathy-guidelines/     # 编码准则（开发辅助）
 ├── tools/                           # 独立工具（py/bat/jar，无 Frida 依赖）
@@ -143,6 +144,12 @@ MobileRE-Skill/
 │   ├── frida_run.py                 # 非交互 Frida 运行（无人值守）
 │   ├── device_ui.py                 # 设备交互（元素树/点击/输入/截图）
 │   ├── emu_run.py / uniharness.py   # Unicorn 离线仿真（含 --watch-* 观测层）
+│   ├── vmp.py                       # 字节码 VM/VMP 逆向（profile 驱动：disasm/verify/trace/model）
+│   ├── vmp_profiles/                # VM 编码模型（换壳只换 JSON）
+│   ├── so_ledger.py / ptr_table.py  # 函数台账→工作队列 / 指针表枚举与分类
+│   ├── probe_layout.py              # 动态结构体布局探测（--at/--hook/--multi-hook）
+│   ├── check_registry.py            # 工具/模块/手册登记漂移自检
+│   ├── ghidra/ ida/                 # 批量脚本（索引 tools/ghidra/README.md）
 │   ├── trace_recon.py / cipher_lab.py  # 观测日志→状态重建 / 密码结构判定（层/表/编排）
 │   ├── fsmon_run.py                 # 设备侧内核文件事件采集与分析（fsmon inotify 后端；落盘件 pull）
 │   ├── check-anti-inject.py / check-janus.bat / debug-gdb.py / janus_check.py  # 检测项

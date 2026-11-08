@@ -209,19 +209,25 @@ class SOImage:
                     "p_type": SEGMENT_TYPE_NAMES.get(hdr["p_type"], hdr["p_type"])}
 
     def iter_sections(self):
-        """遍历 section；单个 section 畸形（如加固改坏 .symtab）时跳过并记录。"""
+        """遍历 section；单个 section 畸形（如加固改坏 .symtab、dump 后
+        shstrtab 越界）时跳过并记录。"""
         for i in range(self.elf.num_sections()):
             try:
                 yield self.elf.get_section(i)
             except Exception as e:  # noqa: BLE001
                 if any(b["index"] == i for b in self.broken_sections):
                     continue
-                hdr = self.elf._get_section_header(i)
-                self.broken_sections.append({
-                    "index": i, "type": hdr["sh_type"],
-                    "size": hdr["sh_size"], "entsize": hdr["sh_entsize"],
-                    "error": str(e),
-                })
+                entry = {"index": i, "error": str(e)}
+                try:
+                    hdr = self.elf._get_section_header(i)
+                    entry.update({
+                        "type": hdr["sh_type"],
+                        "size": hdr["sh_size"],
+                        "entsize": hdr["sh_entsize"],
+                    })
+                except Exception:  # noqa: BLE001
+                    entry["type"] = "?"
+                self.broken_sections.append(entry)
 
     def get_section_by_name(self, name):
         for sec in self.iter_sections():
@@ -289,6 +295,53 @@ def compile_grep(pattern):
         return re.compile(pattern, re.IGNORECASE)
     except re.error as e:
         raise SOError("bad --grep regex: %s" % e)
+
+
+def true_dynsym_count(img, dynsym):
+    """壳会伪造 .dynsym 的 sh_size（如只声明 3 项，实际 539 项）。
+    DT_HASH.nchain 是权威符号数，其次 GNU_HASH 推算，最后才用 sh_size。"""
+    if dynsym is None:
+        return 0, "sh_size"
+    try:
+        tag = None
+        for seg in img.iter_segments():
+            if seg["p_type"] != "PT_DYNAMIC":
+                continue
+            for pos in range(0, seg["p_filesz"] - 15, 16):
+                t, v = struct.unpack_from("<qQ", img.data, seg["p_offset"] + pos)
+                if t == 0:
+                    break
+                if t in (4, 0x6FFFFEF5):
+                    tag = (t, v)
+                    if t == 4:
+                        break
+            if tag and tag[0] == 4:
+                break
+        if tag is None:
+            return 0, "sh_size"
+        off = img.va2off(tag[1])
+        if off is None:
+            return 0, "sh_size"
+        if tag[0] == 4:
+            _, nchain = struct.unpack_from("<II", img.data, off)
+            if nchain > 1:
+                return nchain, "DT_HASH.nchain"
+        else:
+            nbuckets, symoffset, bloom_size, _ = struct.unpack_from("<IIII", img.data, off)
+            buckets = struct.unpack_from("<%dI" % nbuckets, img.data, off + 16 + bloom_size * 8)
+            last = max(buckets) if buckets else 0
+            if last >= symoffset:
+                hoff = off + 16 + bloom_size * 8 + nbuckets * 4
+                idx = last
+                while True:
+                    h = struct.unpack_from("<I", img.data, hoff + (idx - symoffset) * 4)[0]
+                    if h & 1:
+                        break
+                    idx += 1
+                return idx + 1, "DT_GNU_HASH"
+    except Exception:
+        pass
+    return 0, "sh_size"
 
 
 def collect_info(img):
@@ -364,7 +417,29 @@ def collect_info(img):
 
     exports, imports = [], []
     dynsym = img.get_section_by_name(".dynsym")
-    if dynsym is not None:
+    declared = dynsym.num_symbols() if dynsym is not None else 0
+    true_count, count_src = true_dynsym_count(img, dynsym)
+    if true_count and dynsym is not None:
+        info["dynsym_declared"] = declared
+        info["dynsym_actual"] = true_count
+        info["dynsym_count_source"] = count_src
+        if true_count != declared:
+            info.setdefault("broken_sections", []).append({
+                "name": ".dynsym",
+                "reason": "sh_size=%#x declares %d entries, but %s says %d — section header forged"
+                          % (dynsym["sh_size"], declared, count_src, true_count),
+            })
+        for i in range(true_count):
+            sym = dynsym.get_symbol(i)
+            if not sym.name:
+                continue
+            typ = sym["st_info"]["type"]
+            if sym["st_shndx"] == "SHN_UNDEF":
+                imports.append({"name": sym.name, "type": typ})
+            elif typ in ("STT_FUNC", "STT_OBJECT"):
+                exports.append({"name": sym.name, "addr": sym["st_value"],
+                                "size": sym["st_size"], "type": typ})
+    elif dynsym is not None:
         for sym in dynsym.iter_symbols():
             if not sym.name:
                 continue
@@ -389,8 +464,63 @@ def collect_info(img):
             if dynsym is not None and idx and idx < dynsym.num_symbols():
                 sym_name = dynsym.get_symbol(idx).name or None
             entries.append({"offset": rel["r_offset"], "type": tname, "symbol": sym_name})
+    if not counts:
+        # 壳会把 .rela.dyn 从 section header 里抹掉；DT_RELA 才是权威来源
+        r_counts, r_entries, r_src = _relocs_from_dynamic(img, dynsym)
+        if r_counts:
+            counts, entries = r_counts, r_entries
+            info["reloc_source"] = r_src
     info["relocations"] = {"counts": counts, "entries": entries}
     return info
+
+
+def _relocs_from_dynamic(img, dynsym):
+    """按 PT_DYNAMIC 的 DT_RELA/DT_RELASZ/DT_RELAENT（及 DT_JMPREL/DT_PLTRELSZ）读重定位。"""
+    tags = {}
+    try:
+        for seg in img.iter_segments():
+            if seg["p_type"] != "PT_DYNAMIC":
+                continue
+            for pos in range(0, seg["p_filesz"] - 15, 16):
+                t, v = struct.unpack_from("<qQ", img.data, seg["p_offset"] + pos)
+                if t == 0:
+                    break
+                tags[t] = v
+    except Exception:
+        return {}, [], None
+
+    rela_va = tags.get(7)                      # DT_RELA
+    rela_sz = tags.get(8, 0)                   # DT_RELASZ
+    rela_ent = tags.get(9, 24) or 24           # DT_RELAENT
+    jmprel = tags.get(23)                      # DT_JMPREL
+    plt_sz = tags.get(2, 0)                    # DT_PLTRELSZ
+
+    counts, entries = {}, []
+    src = []
+    for va, sz, label in ((rela_va, rela_sz, "DT_RELA"), (jmprel, plt_sz, "DT_JMPREL")):
+        if not va or not sz:
+            continue
+        off = img.va2off(va)
+        if off is None:
+            continue
+        src.append(label)
+        for i in range(sz // rela_ent):
+            try:
+                r_off, r_info, _addend = struct.unpack_from("<QQq", img.data, off + i * rela_ent)
+            except Exception:
+                break
+            rtype = r_info & 0xFFFFFFFF
+            rsym = r_info >> 32
+            tname = AARCH64_RELOC.get(rtype, "TYPE_%d" % rtype)
+            counts[tname] = counts.get(tname, 0) + 1
+            sym_name = None
+            if dynsym is not None and rsym:
+                try:
+                    sym_name = dynsym.get_symbol(rsym).name or None
+                except Exception:
+                    pass
+            entries.append({"offset": r_off, "type": tname, "symbol": sym_name})
+    return counts, entries, "+".join(src) if src else None
 
 
 def print_info_text(info, rx=None):
@@ -416,12 +546,19 @@ def print_info_text(info, rx=None):
         print("  broken_sections: %d (malformed, skipped — typical of packers)"
               % len(info["broken_sections"]))
         for b in info["broken_sections"]:
-            print("    [%d] sh_type=%s size=%#x entsize=%d  %s"
-                  % (b["index"], b["type"], b["size"], b["entsize"], b["error"]))
+            if "size" in b:
+                print("    [%d] sh_type=%s size=%#x entsize=%d  %s"
+                      % (b.get("index", -1), b.get("type", "?"), b["size"], b["entsize"], b["error"]))
+            elif "index" in b:
+                print("    [%d] sh_type=%s  %s" % (b["index"], b["type"], b["error"]))
+            else:
+                print("    %s: %s" % (b.get("name", "?"), b.get("reason", b.get("error", ""))))
     print("  dynamic_entries: %d" % info["dyn_entries"])
     print("  dynsym_defined: %d" % len(info["exports"]))
     print("  dynsym_undef: %d" % len(info["imports"]))
     print("  relocations: %d" % sum(info["relocations"]["counts"].values()))
+    if info.get("reloc_source"):
+        print("  reloc_source: %s (section headers missing/forged)" % info["reloc_source"])
     print()
     print("== Dependencies ==")
     print("  SONAME: %s" % info["soname"])

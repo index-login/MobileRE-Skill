@@ -1,6 +1,6 @@
 ---
 name: func-naming
-description: 已知地址判断函数用途/算法（无符号函数命名）：先查 .dynsym，再取字符串/魔数/成对调用特征，最后回填命名。SO 层深挖的单步能力，入口仍在 frida-mobile-security；恢复结构体用 rev-struct，判漏洞用 native-audit。
+description: 已知地址判断函数用途/算法（无符号函数命名）：先查 .dynsym，再取字符串/魔数/成对调用特征，最后回填命名。SO 层深挖的单步能力，入口仍在 frida-mobile-security；恢复结构体用 native-analysis §3.7，判漏洞用 native-audit。
 ---
 
 # func-naming - 无符号函数命名
@@ -12,10 +12,22 @@ description: 已知地址判断函数用途/算法（无符号函数命名）：
 | 用 | 不用 |
 |---|---|
 | 已有地址（callers / strref / 崩溃偏移 / hook 栈），函数无符号 | 函数已有符号 → 先查 `.dynsym`，命中直接用 |
-| 要判断算法（哈希/编码/压缩/加解密） | 要恢复参数布局 → skill `rev-struct` |
+| 要判断算法（哈希/编码/压缩/加解密） | 要恢复参数布局 → [native-analysis.md ›「3.7 结构体恢复（偏移聚合）」](../../../references/native-analysis.md#37-结构体恢复偏移聚合) |
 | 要给报告/后续 hook 一个可读名字 | 要判漏洞/可达性 → `references/native-audit.md` |
 
 ## 前置
+
+0. **先定地址体系**（混用必空 hook）：
+
+   | 来源 | 地址类型 |
+   |---|---|
+   | `so.py` / Frida | ELF **vaddr** → `mod.base.add(vaddr)` |
+   | **IDA** | ELF **vaddr**（imagebase 通常 0） |
+   | **Ghidra** | vaddr **+ image_base**（默认 `0x100000`，用 `ghidra_get_current_program_info` 确认） |
+   | 文件偏移 | 查 PT_LOAD；**vaddr ≠ offset 时不可当 vaddr 用** |
+
+   拿地址先问它来自哪个工具。同一地址 IDA 能跳、Ghidra 打空，是基址差，不是代码问题。
+   （`so.py info` 的 `raw=YES/NO` 只表示该段 `vaddr == offset`，不是错误。）
 
 1. `.so` 已拉到本地（`adb pull`）。
 2. 记录地址来源（哪条字符串 / 哪个 caller / 哪个崩溃偏移）。
@@ -85,10 +97,10 @@ python3 tools/so.py callers <so> 0x<FUNC>               # 调用者
 | 结论 | 下一步 |
 |---|---|
 | 加解密 / 哈希 / 编码 | [crypto-hook.md ›「一、加密算法分析决策树」](../../../references/crypto-hook.md)（hook 明文/密钥） |
-| 参数是对象/结构体 | skill `rev-struct`（恢复布局） |
+| 参数是对象/结构体 | [native-analysis.md ›「3.7 结构体恢复（偏移聚合）」](../../../references/native-analysis.md#37-结构体恢复偏移聚合)（偏移聚合） |
 | 能被外部输入走到 | [native-audit.md ›「SO 漏洞审计（可达面优先）」](../../../references/native-audit.md)（可达性/漏洞） |
 | 静态看不清、需要真实参数 | [api-reference.md ›「Frida API 参考手册」](../../../references/api-reference.md) + [native-analysis.md ›「三、SO 动态分析」](../../../references/native-analysis.md) |
-| 需要离线复算 | [native-analysis.md ›「3.6 复杂函数离线仿真（emu_run 广度 + setup 助手）」](../../../references/native-analysis.md) 或 skill `rev-unicorn-debug` |
+| 需要离线复算 | [native-analysis.md ›「3.6 复杂函数离线仿真（emu_run 广度 + setup 助手）」](../../../references/native-analysis.md) 或 skill `so-emulate` |
 
 ### 6. 命名 + 回填 + 验证
 

@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Anti-injection test (AndKittyInjector) - Python port of check-anti-inject.bat.
+"""反注入检测（AndKittyInjector）—— check-anti-inject.bat 的 Python 移植。
 
-Usage:
-    python3 tools/check-anti-inject.py <package> [-s SERIAL] [--no-pause] [--wait N]
+用途
+----
+往目标进程注入一个探针 so，然后看它是否出现在 /proc/<pid>/maps 里。
+能看见 = 没有反注入保护；看不见 = 被检出并卸载/阻止。
 
-Requires root + AndKittyInjector(32/64) and libhello(32/64).so on the device.
-Verdict: library visible in /proc/<pid>/maps => injection works (no protection).
+用法
+----
+    python3 tools/check-anti-inject.py <包名> [-s 序列号] [--no-pause] [--wait N]
+
+前置条件
+--------
+设备已 root，且已推送 AndKittyInjector(32/64) 与 libhello(32/64).so。
+
+判定
+----
+库出现在 /proc/<pid>/maps => 注入成功（无保护）。
 """
 import argparse
 import re

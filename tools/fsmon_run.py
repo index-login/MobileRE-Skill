@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
-"""fsmon_run.py — device-side kernel file-event capture/analysis for agents.
+"""fsmon_run.py — 设备侧内核文件事件采集与分析（面向 agent）。
 
-Machine-oriented output: terse K=V progress lines + one `SUMMARY <json>` line.
-Artifacts: <out>/fsmon_<pkg>_<ts>_w<N>.log (normalized) + .summary.json (full).
+在设备上跑 fsmon（inotify 后端），采集进程的文件访问事件，
+用于回答"谁读了什么文件""脱壳产物落在哪""哪个进程写的"。
 
-  capture --pkg P [--watch DIR]... [--duration S] [--launch] [--force-stop] [--proc NAME]
-          [--children] [--profile auto|detect|uniapp|none] [--exclude RE]... [--pull]
-          [--max-lines N] [--raw] [--out DIR] [--serial S]
-  diff    --fsmon-log A --frida-log B [--show N] [--out DIR]
+输出面向机器解析：简洁的 K=V 进度行 + 一行 `SUMMARY <json>`。
+产物：<out>/fsmon_<包名>_<时间戳>_w<N>.log（规范化）+ .summary.json（完整）。
+
+子命令
+------
+  capture --pkg 包名 [--watch 目录]... [--duration 秒] [--launch] [--force-stop]
+          [--proc 进程名] [--children] [--profile auto|detect|uniapp|none]
+          [--exclude 正则]... [--pull] [--max-lines N] [--raw]
+          [--out 目录] [--serial 序列号]
+  diff    --fsmon-log A --frida-log B [--show N] [--out 目录]
   compare --base A.summary.json --new B.summary.json [--show N]
   summary --log A.log
 
-Facts: events only (no content); inotify backend (no fanotify on this device);
-/proc not watchable; use -P for attribution. No extra Python deps.
+已知边界
+--------
+只采事件不含内容；inotify 后端（该设备无 fanotify）；
+/proc 不可 watch；用 -P 做归属判定。无额外 Python 依赖。
 """
 import argparse
 import concurrent.futures as _fut

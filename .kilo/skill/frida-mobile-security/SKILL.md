@@ -42,6 +42,13 @@ frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/intent_tracker.
 
 # 内存敏感数据扫描 + 密码输入监听
 frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/memory_scanner.js
+
+# Android Keystore 观测 + 密钥策略判定（K1-K9）
+frida -U -f com.app -l scripts/core/utils.js -l scripts/monitors/keystore_monitor.js -l scripts/checklist/keystore_audit.js
+
+# API 可达性统计（审 .so 前先定"哪些 JNI 真被调到"）
+frida -H 127.0.0.1:27042 -n Gadget -l scripts/core/utils.js -l scripts/monitors/api_reach.js \
+  -e 'var CONFIG_OVERRIDE={api_reach:{targets:["com.foo.Bar"],methodPrefix:"native"}}'
 ```
 
 > 通道说明：`-U` 是 USB 直连；走端口转发时换成 `-H 127.0.0.1:8888`（先 `adb forward tcp:8888 tcp:8888`）。
@@ -75,13 +82,17 @@ adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev
 | 意图关键词 | 手法域名 | 加载 |
 |-----------|---------|------|
 | "绕过检测" "过掉反调试" "挂上就闪退" "防注入" "加固壳" "SVC" "TracerPid" "GDB" | 环境对抗 | `references/anti-detection.md` |
+| "注入 so" "注入通道" "zygote 注入" "把 so 放进目标" "loader" "gadget 加载不起来" | 注入通道 | `references/android-internals.md` → `references/anti-detection.md` ›「注入通道选择」→ `tools/inject/README.md` |
 | "脱壳" "加固解密" "提取 dex" "so 提取" | 脱壳 | `references/unpacking.md`（**先分诊：无壳直接解包；有壳先 root 内存 dump；需回填再上 `tools/unpack.py`**） |
 | "加密明文" "算法" "密钥" "AES" "hook 方法" "修改参数" "伪造返回值" "SSL 证书" "TrustManager" "onReceivedSslError" | 加密/功能 hook | `references/crypto-hook.md` |
 | "看网络请求" "抓包" "还原协议" "行为摸底" "全程监控" "污点追踪" "内存扫描" "Intent" "Serializable" "文件落地" "内核视角" "谁写的" | 行为分析 | `references/behavior-analysis.md` |
 | "分析这个类" "攻击面" "序列化" "WebView" "深链" "Provider" "反序列化" | 静态分析 | `references/static-analysis.md` |
 | "分析这个 so" "native 函数" "so 里的加密" "字符串引用" "交叉引用" "逆向 so" "找不到导出" | SO 层分析 | `references/native-analysis.md` |
-| "so 找漏洞" "审计 so" "可达性" "哪个函数被调到" "JNI 审计" "漏审" "越界" "UAF" "double-free" "堆溢出" "谁写坏了内存" | SO 审计 | `references/native-audit.md` |
+| "全量还原这个 so" "2000 个函数" "函数台账" "哪些还没分析" "分析到什么程度算完成" | SO 函数级还原 | skill `so-function-recovery` + `references/so-function-recovery.md` |
+| "VM 壳" "VMP" "字节码" "自定义虚拟机" "opcode 表" "handler" "指令编码解不出" | VM/VMP 逆向 | **skill `vmp-analysis`**（8 步执行清单）+ `tools/vmp.py` + `tools/vmp_profiles/` |
 | "这个函数是干什么的" "无符号函数" "识别算法" "魔数" "给它命个名" | 函数命名 | `references/so-func-naming.md`（或 skill `func-naming`） |
+| "离线跑一遍" "不启动 App 复算" "解密验证" "海量试输入" "Unicorn" | 离线仿真 | `references/so-emulation.md`（或 skill `so-emulate`） |
+| "so 找漏洞" "审计 so" "可达性" "哪个函数被调到" "JNI 审计" "漏审" "越界" "UAF" "double-free" "堆溢出" "谁写坏了内存" | SO 审计 | `references/native-audit.md` |
 | "模块无输出" "闪退" "ANR" "hook 不生效" "报错" | 故障诊断 | `references/troubleshooting.md` |
 | "写自定义 hook" "API 用法" "Stalker" "RegisterNatives" "内存搜索" | API 参考 | `references/api-reference.md` |
 
@@ -135,6 +146,10 @@ adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev
 | `jni_bridge_monitor.js` | 方法索引桥加固分析（梆梆/360 VMP/Dex2C 特征） | native-analysis |
 | `ssl_plaintext.js` | OkHttp/Retrofit HTTP 明文 | crypto-hook |
 | `memory_scanner.js` | 内存敏感数据扫描 + 密码输入监听 | crypto-hook |
+| `keystore_monitor.js` | Android Keystore 观测：密钥清单 / KeyGenParameterSpec 创建策略 / KeyInfo 全量属性（纯事实，不判定） | crypto-hook |
+| `tls_surface.js` | 定位 TLS 实现：按模块统计 SSL_/X509_ 导出与 OpenSSL 字符串（系统 libssl / native 核心 / Flutter 引擎三类） | native-analysis |
+| `api_reach.js` | **API 可达性统计**：按类 hook 全部方法只计数（可限定 `native` 前缀）→ 输出「可达 / 未命中」 | native-audit |
+| `native_memguard.js` | 堆越界/非法释放守卫：malloc 分配表 + `memcpy`/`strcpy` 边界检查 + 调用栈（含 `so+offset`）；**未真机验证** | native-audit |
 | `file_monitor.js` | 文件读写监控 | behavior-analysis |
 | `network_monitor.js` | 网络连接/收发监控 | behavior-analysis |
 | `thread_monitor.js` | 线程创建监控 | behavior-analysis |
@@ -158,6 +173,7 @@ adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev
 | `dlsym_tracer.js` | 追踪运行时符号解析 | anti-detection |
 | `so_loader_tracer.js` | 记录 do_dlopen 路径+基址 | anti-detection |
 | `root_bypass.js` | Root 检测绕过（File.exists/系统属性） | anti-detection |
+| `flutter_ssl.js` | Flutter/Dart 证书校验绕过（libflutter.so 内 BoringSSL；pattern/offset/probe 三模式，见 cross-platform.md › Flutter） | crypto-hook |
 | `ssl_unpinning.js` | SSL Pinning 通用绕过（SSLContext/OkHttp2·3/WebView/Conscrypt/TrustKit/Cronet 等 12 类目，纯 Java 层） | crypto-hook |
 | `fingerprint_bypass.js` | 指纹/生物识别绕过（BiometricPrompt / FingerprintManagerCompat / FingerprintManager，直接回调成功） | crypto-hook |
 
@@ -179,20 +195,41 @@ adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev
 
 | 工具 | 用途 | 归属 |
 |------|------|------|
-| `unpack.py` | 脱壳**升级项**（Frida 回填：loadClass+补充+自动pull+fix-checksum+去重+方法体标记）；仅在 root 内存 dump 拿不到完整方法体时用 | unpacking |
+| `unpack.py` | 脱壳**升级项**（Frida 回填：loadClass+补充+自动pull+fix-checksum+去重+方法体标记）；支持 **spawn / attach / Gadget / 任意端口**，单会话完成回填+扫描，每 15 批增量落盘；仅在 root 内存 dump 拿不到完整方法体时用 | unpacking |
 | `dex_rebuilder.py` | ① `--fix-checksum` 重算 checksum（默认操作）② CodeItem 离线重组回填 | unpacking |
 | `dex_dedupe.py` | 产物去重/校验 | unpacking |
 | `fix_elf.py` | 修复 ELF header | unpacking |
-| `fix_axml.py` | 修复爱加密魔改 AXML（Manifest 多 4 字节填充+headerSize 谎报 0x000C，jadx/apktool 无法解析时用） | static-analysis |
+| `fix_axml.py` | 修复魔改 AXML（Manifest 多 4 字节填充 + headerSize 谎报 0x000C，jadx/apktool 无法解析时用；部分加固厂商使用） | static-analysis |
+| `fetch_android_headers.py` | 按 AOSP tag 拉 ART/libdexfile 头文件（走代理）；头文件本身不入库 | static-analysis |
 | `ipa.py` | IPA 元数据（名称/BundleID/大小/版本/MD5）+ 结构概览/Mach-O 清单/字符串搜索/解包 | static-analysis |
 | `patch_gadget_threadnames.py` | patch gadget 线程名 | native-analysis |
+| `inject/bridge.c` + `build.py` | **注入跳板**：注入器只能加载 so 时，由 constructor 完成 `dlopen` + 调用导出函数（等价 `-symbols`）；实测 `/data/local/tmp` 对 App 不可读 → 用 `--memfd` 或私有目录，详见同目录 README | native-analysis |
 | `frida_run.py` | **非交互 Frida 运行器**（spawn/attach → 加载 → 观察 N 秒 → 存活报告 → detach；`-l` 支持 skill 内相对路径；`-e @cfg.js` 注入 CONFIG_OVERRIDE） | native-analysis |
 | `device_ui.py` | 设备交互（text/tap/swipe/key/shot/logs/launch/clear/foreground/size） | behavior-analysis |
-| `emu_run.py` / `uniharness.py` | 离线仿真（rev-unicorn-debug）：单函数模拟 / JNI·libc 打桩基座。**加载即自动**：重定位分流（函数/数据导入）、`DT_INIT_ARRAY`、syscall 层（`svc #0` 兜底）、内置 `mem*/str*/calloc/pthread/ptrace/fopen/…` 桩；未桩导入首次命中打印 `[!] unstubbed`。观测层（`--watch-*/--scan`）与 JNI/桩日志（`--log-jni/--trace-stubs/--stub/--dump-jni-out`）；复杂调用走 `--setup`（`--ret-str`/`--out-arg`/`--no-init`/`--no-syscalls`） | native-analysis |
+| `emu_run.py` / `uniharness.py` | 离线仿真（so-emulate）：单函数模拟 / JNI·libc 打桩基座。**加载即自动**：重定位分流（函数/数据导入）、`DT_INIT_ARRAY`、syscall 层（`svc #0` 兜底）、内置 `mem*/str*/calloc/pthread/ptrace/fopen/…` 桩；未桩导入首次命中打印 `[!] unstubbed`。观测层（`--watch-*/--scan`）与 JNI/桩日志（`--log-jni/--trace-stubs/--stub/--dump-jni-out`）；复杂调用走 `--setup`（`--ret-str`/`--out-arg`/`--no-init`/`--no-syscalls`） | native-analysis |
 | `emu_setup.py` | **emu_run 的通用 setup 助手库**：`std_string/std_vector/call_sret/read_std_string/install_stub/patch_data_import/ctype_table/cstr`——复杂函数（C++ 对象入参/出参、覆盖 GOT 桩）少写样板 | native-analysis |
 | `trace_recon.py` | 仿真 trace 状态重建：观测日志 → 缓冲状态序列（COPY/PASS 自动分段） | native-analysis |
 | `fsmon_run.py` | **设备侧内核文件事件采集与分析**（`capture`/`diff`/`compare`/`summary`；流式、读风暴自动降噪、写活动视图、敏感路径检测画像、落盘件 pull+分类）。不注入/跨进程/无内容（内容走 Frida）；Frida 上不去时的兜底观察。需 root；设备侧 fsmon 二进制缺件自装（nowsecure/fsmon Release） | behavior-analysis |
 | `cipher_lab.py` | 密码结构判定器：`layers` 层写法双轨迹判定 / `table` 白盒表反推 / `schedule` 编排归因（出主密钥） | native-analysis |
+| `so.py` | **SO 静态分析一站式**：`info`（段/节/依赖/导出/导入/重定位/`--v2o`）/ `strings` / `dump` / `disasm` / `strref`（串→引用点）/ `callers` / `svc`（内联系统调用）/ `jni`（Java 参数判型） | native-analysis |
+| `so_ledger.py` | **函数台账 → 工作队列**：三层筛选（代码分区/机器形状/证据分级）、形状去重、机械命名建议。配 `tools/ghidra/so_inventory.java` 用 | so-function-recovery |
+| `ptr_table.py` | **指针表枚举与分类**：`--scan` 扫可写段的连续指针数组、`--tbl` 单表分析、`--xref` 反查槽位、`--classify vm` 标 handler/opcode 表候选 | so-function-recovery |
+| `probe_layout.py` | **动态结构体布局探测**：`--at`/`--hook` 取结构、`--auto` 扫偏移、`--multi-hook` 一次抓多个 PC 的 x0..x5、`--setup` 挂样本环境 | so-function-recovery |
+| `vmp.py` | **字节码 VM / VMP 壳逆向**（profile 驱动）：`disasm` 反汇编 / `verify` 用 trace 校验解码模型 / `trace` 动态追踪执行路径 / `model` 查 handler 指令模型 / `profile` 管理编码模型。换壳只换 `tools/vmp_profiles/*.json` | so-function-recovery |
+| `check_registry.py` | **登记漂移自检**：扫 `tools/` `scripts/` `references/` 对照入口文档，列出未登记项，退出码 1 | 维护 |
+| `emu_setup_template.py` | **`--setup` 脚本骨架**：前 4 步通用（bss 清理/重定位/指针中和/JNI+syscall），第 5 步按 `[!] unstubbed` 日志补桩。`emu_run`/`probe_layout`/`vmp trace` 三处通用 | native-analysis |
+
+### tools/ghidra/ + tools/ida/（批量脚本，非独立 CLI）
+
+`tools/ghidra/*.java` 是 Ghidra 脚本（class 脚本走 `run_ghidra_script`，inline body 走 `run_script_inline`）；
+`tools/ida/*.py` 在 IDA 内执行（`py_exec_file`）。**逐个脚本的调用方式、cfg 键、默认值来源见 `tools/ghidra/README.md`**（唯一索引）。
+两者都只做"批量机械活"，单函数分析走 MCP（`ghidra_decompile_function` 等）。
+
+### Frida 内存工具（`scripts/utils/`）
+
+| 模块 | 用途 | 归属 |
+|------|------|------|
+| `dex_capture.js` | 早期 DEX 捕获（mmap 记录 + 严格校验 + 异步落盘；默认不 hook mmap 以免占满脚本线程） | unpacking |
 
 ### templates/ + checklist/
 
@@ -203,6 +240,7 @@ adb shell "su -c 'nohup <设备上 frida-server 路径> -l 127.0.0.1:8888 > /dev
 | `templates/http_mirror.py` | **镜像转发器**：Frida 明文 → HTTP → 代理（Yakit/Burp）。默认 `TZTREQ`/`TZTRESP` 区分方向；echo 消 502；`--check` 自检；控制面 `/__stats`、`/__history`、`/__replay`、`/__rpc` |
 | `checklist/webview_ssl_check.js` | WebView SSL 检测清单 |
 | `checklist/fridainject.js` | **frida 环境检测项**：注入后弹窗不出现/进程被杀 = 存在检测（验证注入是否成功） |
+| `checklist/keystore_audit.js` | **Keystore 密钥策略判定 K1–K9**：认证绑定强度 / 是否可导出 / 弱算法配置；输出=事实+规则（不含场景字段） |
 
 ---
 
@@ -253,7 +291,7 @@ var CONFIG_OVERRIDE = {
 
 首次分析新 App：check-janus → debug-gdb → check-anti-inject → Frida Phase 1。所有工具前置条件：root + SELinux Permissive。注意 `debug-gdb.py` 附加成功后目标若被反调试杀死，属于**检测到反调试**（正结论），非工具失败。
 
-**GetAPKInfo.jar 解析失败（爱加密等魔改 Manifest，报 `0x000c0003`）时，直接用 `janus_check.py`**——经 apksigner 验证签名方案（V1+V2 通过 = Janus 安全），效果与 GetAPKInfo.jar 一致。
+**GetAPKInfo.jar 解析失败（魔改 Manifest，报 `0x000c0003`）时，直接用 `janus_check.py`**——经 apksigner 验证签名方案（V1+V2 通过 = Janus 安全），效果与 GetAPKInfo.jar 一致。
 
 **冒烟自检（可选，验证整套链路）**：L2/L3 回归与离线复算的预期结果见 `references/smoke-test.md`。
 
@@ -282,8 +320,10 @@ var CONFIG_OVERRIDE = {
 | 行为摸底 / 网络协议 / 污点追踪 / 交叉分析 | `references/behavior-analysis.md` |
 | 攻击面枚举 / 序列化 / WebView / jadx-mcp | `references/static-analysis.md` |
 | SO 层分析 / Ghidra / unidbg / 分层下钻 / 字符串引用 | `references/native-analysis.md` |
-| SO 找漏洞 / 可达性判定 / 审计顺序 / Ghidra 前置（PLT 命名·原型回填） | `references/native-audit.md` |
 | 无符号函数命名 / 魔数 / 成对调用 / 调用者递归 | `references/so-func-naming.md` |
+| 单函数离线复算 / 仿真打桩 / JNI 环境 | `references/so-emulation.md` |
+| SO 找漏洞 / 可达性判定 / 审计顺序 / Ghidra 前置（PLT 命名·原型回填） | `references/native-audit.md` |
+| ART 结构体偏移 / 建 ArtMethod·ClassLinker 类型 | `references/android-headers/README.md`（头文件不入库，`tools/fetch_android_headers.py` 按需拉）+ `tools/ghidra/art_make_structs.java` |
 | 故障排查（无输出/闪退/init_hook 陷阱） | `references/troubleshooting.md` |
 | Frida API 手册（写自定义 hook 时） | `references/api-reference.md` |
 | 参考文章索引（脱壳原理/攻击面方法论） | `references/articles.md` |

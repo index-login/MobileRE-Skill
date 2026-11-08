@@ -71,7 +71,19 @@
      * @param {string} soName - SO 文件名
      * @param {string} outputName - 输出文件名
      */
-    function dumpPrecise(soName, outputName) {
+    /**
+     * 按段精确 dump — 以 program header 计算文件大小，并补上运行时新增的匿名段
+     *
+     * 关键：加固壳常把解密代码映射到**文件之外的匿名段**（file=null），
+     * 这类内容不在 p_offset..p_offset+p_filesz 范围内，只按 program header
+     * 截断会丢掉整块解密代码（实测某加固 SO 丢 191456 字节）。
+     * 因此最终尺寸取 max(program header 推算值, 模块实际 size)。
+     *
+     * @param {string} soName - SO 文件名
+     * @param {string} outputName - 输出文件名
+     * @param {boolean} fullModule - true 时强制按模块实际大小 dump（默认 false）
+     */
+    function dumpPrecise(soName, outputName, fullModule) {
         var info = getSoBase(soName);
         if (!info) { U.fail("SO not found: " + soName); return false; }
 
@@ -79,7 +91,6 @@
         var outputPath = CONFIG.outputDir + outputName;
 
         try {
-            // 读取 ELF 头
             var e_phoff = (Process.pointerSize === 8)
                 ? info.base.add(0x20).readU64()
                 : info.base.add(0x1C).readU32();
@@ -88,7 +99,6 @@
 
             U.info("[SO_DUMP] ELF: " + e_phnum + " program headers, phoff=0x" + e_phoff.toString(16));
 
-            // 计算最后一个段的结束偏移
             var maxEnd = 0;
             for (var i = 0; i < e_phnum; i++) {
                 var phdr = info.base.add(e_phoff + i * e_phentsize);
@@ -96,27 +106,63 @@
                 if (p_type !== 1 /* PT_LOAD */) continue;
                 var p_offset = (Process.pointerSize === 8) ? phdr.add(0x8).readU64() : phdr.add(0x4).readU32();
                 var p_filesz = (Process.pointerSize === 8) ? phdr.add(0x20).readU64() : phdr.add(0x10).readU32();
-                var end = p_offset + p_filesz;
-                if (end > maxEnd) maxEnd = end;
+                var end = p_offset.add(p_filesz);
+                if (end.compare(maxEnd) > 0) maxEnd = end;
             }
 
-            U.info("[SO_DUMP] File size from segments: " + (maxEnd / 1024).toFixed(1) + " KB");
+            U.info("[SO_DUMP] PT_LOAD 推算大小: " + (maxEnd.toNumber() / 1024).toFixed(1) + " KB");
+            U.info("[SO_DUMP] 模块实际大小:   " + (info.size / 1024).toFixed(1) + " KB");
 
-            // 按实际文件大小 dump
-            var realSize = Math.min(maxEnd, info.size);
+            var anon = detectAnonSegments(info);
+            if (anon.total > 0) {
+                U.alert("[SO_DUMP] 检测到 " + anon.count + " 个匿名段，共 "
+                    + (anon.total / 1024).toFixed(1) + " KB（壳解密区，不在文件映射内）");
+            }
+
+            var realSize = fullModule ? info.size : Math.max(maxEnd.toNumber(), info.size);
+            realSize = Math.min(realSize, info.size);
+
+            U.info("[SO_DUMP] dump 尺寸: " + (realSize / 1024).toFixed(1) + " KB");
+
             Memory.protect(info.base, realSize, 'rwx');
             var data = info.base.readByteArray(realSize);
             var f = new File(outputPath, "wb");
             f.write(data);
             f.close();
             U.ok("[SO_DUMP:PRECISE] " + soName + " → " + outputPath + " (" + (realSize / 1024).toFixed(1) + " KB)");
+
+            if (anon.total > 0 && !fullModule) {
+                U.info("[SO_DUMP] 提示：本 so 含匿名解密段，若解析异常请用 fullModule=true 重 dump");
+            }
             return true;
         } catch (e) {
             U.fail("[SO_DUMP:PRECISE] " + soName + " failed: " + e.message);
-            // 回退到简易 dump
             U.info("[SO_DUMP] Falling back to simple dump...");
             return dumpSimple(soName, outputName);
         }
+    }
+
+    /**
+     * 检测模块内的匿名段（file=null）——加固壳的解密区特征
+     * @returns {{count:number, total:number, ranges:Array}}
+     */
+    function detectAnonSegments(info) {
+        var ranges = [];
+        var total = 0;
+        try {
+            Process.enumerateRanges('r--').forEach(function (r) {
+                var rEnd = r.base.add(r.size);
+                if (rEnd.compare(info.base) <= 0) return;
+                if (r.base.compare(info.base.add(info.size)) >= 0) return;
+                if (r.file) return;
+                var off = r.base.sub(info.base).toInt32();
+                var size = Math.min(r.size, info.size - off);
+                ranges.push({ offset: off, size: size, protection: r.protection });
+                total += size;
+            });
+        } catch (e) { /* enumerateRanges 失败时静默 */ }
+        ranges.sort(function (a, b) { return a.offset - b.offset; });
+        return { count: ranges.length, total: total, ranges: ranges };
     }
 
     /**

@@ -131,8 +131,7 @@ MobileRE-Skill/
 │       │       ├── checklist/           # Check items
 │       │       └── templates/           # Templates (analysis.py / custom_hook.js)
 │       ├── func-naming/             # Stripped function naming (symtab/constants/call patterns)
-│       ├── rev-struct/              # Struct recovery (offset-access aggregation)
-│       ├── rev-unicorn-debug/       # Unicorn emulation debug (tools live in tools/)
+│       ├── so-emulate/              # Single-function offline emulation (Unicorn, tools in tools/)
 │       ├── dex-mem-dump/            # Runtime DEX dump (panda + mem, ptrace-free)
 │       └── karpathy-guidelines/     # Coding guidelines (dev aid)
 ├── tools/                           # Standalone tools (py/bat/jar, no Frida)
