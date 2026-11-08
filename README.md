@@ -5,7 +5,7 @@
 **一个让 AI Agent（Kilo）真正"会逆向"的完整技能系统** —— 不只是 Frida 脚本，而是覆盖静态分析、动态分析、脱壳、反检测、Native 逆向、安全合规的完整逆向工作流。
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.7.0-2ea44f?style=flat-square)](https://github.com/index-login/MobileRE-Skill/releases)
+[![Version](https://img.shields.io/badge/Version-v0.8.0-2ea44f?style=flat-square)](https://github.com/index-login/MobileRE-Skill/releases)
 [![Android](https://img.shields.io/badge/Android-3DDC84?style=flat-square&logo=android&logoColor=white)](https://developer.android.com/)
 [![Frida](https://img.shields.io/badge/Frida-FF6B57?style=flat-square&logo=frida&logoColor=white)](https://frida.re/)
 [![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
@@ -106,17 +106,15 @@
 
 ```
 MobileRE-Skill/
-├── references/                      # 技巧手册 wiki（项目级，索引见 _index.md）
+├── references/                      # 技巧手册 wiki（18 份，全量索引见 _index.md）
 │   ├── _index.md                    # 索引：作用 / 何时读 / 是否常驻
-│   ├── unpacking.md                 # 脱壳
-│   ├── anti-detection.md            # 环境对抗
-│   ├── crypto-hook.md               # 加密/功能 hook
-│   ├── behavior-analysis.md         # 行为分析
-│   ├── static-analysis.md           # 静态攻击面
-│   ├── native-analysis.md           # SO 层分析
-│   ├── troubleshooting.md           # 故障诊断
-│   ├── api-reference.md             # Frida API 参考
-│   ├── articles.md                  # 参考文章索引
+│   ├── unpacking.md · anti-detection.md · crypto-hook.md
+│   ├── behavior-analysis.md · static-analysis.md
+│   ├── native-analysis.md · native-audit.md · so-function-recovery.md
+│   ├── so-analysis-pipeline.md · so-func-naming.md · so-emulation.md
+│   ├── android-internals.md · cross-platform.md
+│   ├── troubleshooting.md · api-reference.md · articles.md
+│   ├── android-headers/             # ART 头文件（不入库，按需 fetch_android_headers.py 拉）
 │   └── smoke-test.md                # 冒烟自检（回归清单，其它资料）
 ├── .kilo/
 │   ├── agent/
@@ -134,6 +132,7 @@ MobileRE-Skill/
 │       ├── func-naming/             # 无符号函数命名（符号表/魔数/调用模式）
 │       ├── so-emulate/              # 单函数离线仿真（Unicorn，工具在 tools/）
 │       ├── so-function-recovery/    # 大型 SO 函数级还原流水线（台账/边界/VM 编码）
+│       ├── vmp-analysis/            # VM/VMP 逆向 8 步流水线（profile 驱动）
 │       ├── dex-mem-dump/            # 运行时 DEX 脱壳（panda + mem，ptrace-free）
 │       └── karpathy-guidelines/     # 编码准则（开发辅助）
 ├── tools/                           # 独立工具（py/bat/jar，无 Frida 依赖）
@@ -144,11 +143,13 @@ MobileRE-Skill/
 │   ├── frida_run.py                 # 非交互 Frida 运行（无人值守）
 │   ├── device_ui.py                 # 设备交互（元素树/点击/输入/截图）
 │   ├── emu_run.py / uniharness.py   # Unicorn 离线仿真（含 --watch-* 观测层）
+│   ├── emu_setup.py / emu_setup_template.py  # 仿真 setup 助手库 / --setup 脚本骨架
 │   ├── vmp.py                       # 字节码 VM/VMP 逆向（profile 驱动：disasm/verify/trace/model）
 │   ├── vmp_profiles/                # VM 编码模型（换壳只换 JSON）
 │   ├── so_ledger.py / ptr_table.py  # 函数台账→工作队列 / 指针表枚举与分类
 │   ├── probe_layout.py              # 动态结构体布局探测（--at/--hook/--multi-hook）
 │   ├── check_registry.py            # 工具/模块/手册登记漂移自检
+│   ├── fetch_android_headers.py     # 按 AOSP tag 拉 ART 头文件（头文件不入库）
 │   ├── ghidra/ ida/                 # 批量脚本（索引 tools/ghidra/README.md）
 │   ├── trace_recon.py / cipher_lab.py  # 观测日志→状态重建 / 密码结构判定（层/表/编排）
 │   ├── fsmon_run.py                 # 设备侧内核文件事件采集与分析（fsmon inotify 后端；落盘件 pull）

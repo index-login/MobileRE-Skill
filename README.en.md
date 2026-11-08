@@ -5,7 +5,7 @@
 **A complete RE skill system that turns an AI Agent (Kilo) into a real reverse engineer** — not just Frida scripts, but a full workflow covering static analysis, dynamic analysis, unpacking, anti-detection bypass, native reversing, and security compliance.
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.7.0-2ea44f?style=flat-square)](https://github.com/index-login/MobileRE-Skill/releases)
+[![Version](https://img.shields.io/badge/Version-v0.8.0-2ea44f?style=flat-square)](https://github.com/index-login/MobileRE-Skill/releases)
 [![Android](https://img.shields.io/badge/Android-3DDC84?style=flat-square&logo=android&logoColor=white)](https://developer.android.com/)
 [![Frida](https://img.shields.io/badge/Frida-FF6B57?style=flat-square&logo=frida&logoColor=white)](https://frida.re/)
 [![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
@@ -47,7 +47,7 @@ A **complete RE agent skill system**, not a script collection:
 
 - 🧠 **Agent brain** (`.kilo/agent/reverser.md`) — RE role definition, auto-selects modules via the decision tree
 - 📚 **Domain knowledge** (`references/` project wiki + `.kilo/skill/`) — 9 technique domain manuals (full index in `_index.md`) + dynamic analysis control + native deep-dive capabilities (symbol/struct recovery, offline emulation, in-memory DEX dump)
-- 🔧 **Capability units** (`scripts/`) — 25 Frida modules (monitors 15 + bypass 10) + 22 standalone tools + checklists
+- 🔧 **Capability units** (`scripts/`) — 31 Frida modules (monitors 19 + bypass 12) + 26 standalone tools + checklists
 - 🛠️ **Compliance detection** — injection, debugging, WebView SSL, APK metadata/signature
 - 🔌 **MCP integration** (`kilo.json`) — jadx-mcp (Java decompile) + ghidra-mcp (binary analysis)
 
@@ -105,17 +105,15 @@ A **complete RE agent skill system**, not a script collection:
 
 ```
 MobileRE-Skill/
-├── references/                      # Technique manuals wiki (project-level, index in _index.md)
+├── references/                      # Technique manuals wiki (18 files, full index in _index.md)
 │   ├── _index.md                    # Index: purpose / when to read / resident
-│   ├── unpacking.md                 # Unpacking
-│   ├── anti-detection.md            # Environment countermeasures
-│   ├── crypto-hook.md               # Crypto/function hook
-│   ├── behavior-analysis.md         # Behavior analysis
-│   ├── static-analysis.md           # Static attack surface
-│   ├── native-analysis.md           # SO-layer analysis
-│   ├── troubleshooting.md           # Troubleshooting
-│   ├── api-reference.md             # Frida API reference
-│   ├── articles.md                  # Article index
+│   ├── unpacking.md · anti-detection.md · crypto-hook.md
+│   ├── behavior-analysis.md · static-analysis.md
+│   ├── native-analysis.md · native-audit.md · so-function-recovery.md
+│   ├── so-analysis-pipeline.md · so-func-naming.md · so-emulation.md
+│   ├── android-internals.md · cross-platform.md
+│   ├── troubleshooting.md · api-reference.md · articles.md
+│   ├── android-headers/             # ART headers (not committed; fetch via fetch_android_headers.py)
 │   └── smoke-test.md                # Smoke self-test (misc)
 ├── .kilo/
 │   ├── agent/
@@ -125,13 +123,15 @@ MobileRE-Skill/
 │       │   ├── SKILL.md             # Control: task routing + decision tree + module index
 │       │   └── scripts/             # Frida JS modules (loaded via frida -l)
 │       │       ├── core/utils.js        # Common utils (always loaded first)
-│       │       ├── monitors/            # 15 monitoring modules (observe only)
-│       │       ├── bypass/              # 10 intervention modules (anti-detection etc.)
+│       │       ├── monitors/            # 19 monitoring modules (observe only)
+│       │       ├── bypass/              # 12 intervention modules (anti-detection etc.)
 │       │       ├── utils/               # In-memory dump JS (so_dump / dex_* / codeitem)
 │       │       ├── checklist/           # Check items
 │       │       └── templates/           # Templates (analysis.py / custom_hook.js)
 │       ├── func-naming/             # Stripped function naming (symtab/constants/call patterns)
 │       ├── so-emulate/              # Single-function offline emulation (Unicorn, tools in tools/)
+│       ├── so-function-recovery/    # Large SO function-level recovery pipeline
+│       ├── vmp-analysis/            # VM/VMP 8-step pipeline (profile-driven)
 │       ├── dex-mem-dump/            # Runtime DEX dump (panda + mem, ptrace-free)
 │       └── karpathy-guidelines/     # Coding guidelines (dev aid)
 ├── tools/                           # Standalone tools (py/bat/jar, no Frida)
@@ -142,6 +142,14 @@ MobileRE-Skill/
 │   ├── frida_run.py                 # Non-interactive Frida runner (unattended)
 │   ├── device_ui.py                 # Device UI (elements/tap/text/shot)
 │   ├── emu_run.py / uniharness.py   # Unicorn offline emulation (--watch-* observability)
+│   ├── emu_setup.py / emu_setup_template.py  # Emulation setup helpers / --setup skeleton
+│   ├── vmp.py                       # Bytecode VM/VMP reversing (profile-driven)
+│   ├── vmp_profiles/                # VM encoding models (swap shells = swap JSON)
+│   ├── so_ledger.py / ptr_table.py  # Function ledger -> work queue / pointer-table scan
+│   ├── probe_layout.py              # Dynamic struct layout probing
+│   ├── check_registry.py            # Tool/module/manual registry drift self-check
+│   ├── fetch_android_headers.py     # Fetch ART headers by AOSP tag (headers not committed)
+│   ├── ghidra/ ida/                 # Batch scripts (index: tools/ghidra/README.md)
 │   ├── trace_recon.py / cipher_lab.py  # log -> state reconstruction / cipher structure adjudication
 │   ├── fsmon_run.py                 # Device-side kernel file-event capture/analysis (fsmon inotify backend; artifact pull)
 │   ├── check-anti-inject.py / check-janus.bat / debug-gdb.py / janus_check.py  # Detection
