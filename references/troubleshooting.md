@@ -43,7 +43,7 @@
 
 **判定（先排除"检测"误判）：**
 1. 加载脚本存活 = 无入口级检测；崩溃只发生在触发功能时 → 抓 tombstone
-2. 典型特征：`art::InvokeWithVarArgs → JNI::CallStaticVoidMethod`（jmethodID=NULL），调用方落在 `/memfd:*`（壳 JNI 缓存）或 `libexecmain`/`libDexHelper` 等壳 so → **hook 打了壳保护方法**
+2. 典型特征：`art::InvokeWithVarArgs → JNI::CallStaticVoidMethod`（jmethodID=NULL），调用方落在 `/memfd:*`（壳 JNI 缓存）或壳 so 内xecmain`/`libDexHelper` 等壳 so → **hook 打了壳保护方法**
 3. 与「检测」区分：检测通常表现为加载后立即退出/弹窗/`exit_blocker` 有 BLOCKED；此类崩溃无 BLOCKED、无检测提示
 
 **对策：**
@@ -61,7 +61,7 @@
 
 **症状：** `init_hook(mode:'patch')` 后 app 直接 SIGILL 崩溃，或卡在启动页无响应。
 
-**原因：** 壳 so（如 `libexec.so`、`libDexHelper.so`）的 init_array 同时包含解密函数和检测函数。`mode:'patch'` 只 patch 含 `SVC #0` 的函数，但有些检测函数不用 SVC（如直接 `BRK #1` 或 `pthread_create` 创建检测线程），这些函数被 patch 后不会 SEGV，但解密函数被误 patch 会导致后续代码全错 → SIGILL。
+**原因：** 壳 so 的 init_array 同时包含解密函数和检测函数。`mode:'patch'` 只 patch 含 `SVC #0` 的函数，但有些检测函数不用 SVC（如直接 `BRK #1` 或 `pthread_create` 创建检测线程），这些函数被 patch 后不会 SEGV，但解密函数被误 patch 会导致后续代码全错 → SIGILL。
 
 **排查：**
 1. 先用 `mode:'inspect'` 看每个 init_array 函数的 hexdump 和 heuristic 标签
@@ -116,7 +116,7 @@
 
 **排查：**
 1. 设置 `duration: 30` 只追踪前 30 秒
-2. 设置 `targetModules: ["libexec.so"]` 只追踪检测 SO
+2. 设置 `targetModules: ["<shell>.so"]` 只追踪检测 SO
 3. 设置 `filterSyscalls: [93, 94, 129, 131]` 只看 kill/exit
 4. 设置 `traceChildThreads: false` 只追踪主线程
 5. 如果仍然卡死，临时用 `duration: 10` 极短时间窗口
@@ -140,12 +140,12 @@
    ```bash
    adb shell "readelf -s /apex/com.android.runtime/bin/linker64 | grep call_constructors"
    ```
-3. 如果都找不到，需要离线反汇编 linker64 找偏移：
+3. 如果都找不到，离线查符号表（跨平台；不用 objdump/grep）：
    ```bash
-   adb pull /apex/com.android.runtime/bin/linker64 /tmp/linker64
-   llvm-objdump -d /tmp/linker64 | grep "bl.*call_constructors"
+   adb pull /apex/com.android.runtime/bin/linker64 ./linker64
+   python3 tools/so.py info ./linker64 --grep call_constructors
    ```
-   找到 `bl #0x????? <call_constructors>` 后，将偏移加入 `fallbackOffsets` 列表
+   拿到地址（如 `0x50cf8`）后加入 `fallbackOffsets` 列表
 4. 如果 linker64 路径不同（某些厂商定制 ROM），用 `adb shell "ls /apex/com.android.runtime/bin/"` 确认实际路径
 
 ### init_hook 拦截了但 callback 没触发

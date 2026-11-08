@@ -127,7 +127,7 @@ DEX 已 fix-checksum（unpack.py 内置），无需 `-Pdex-input.verify-checksum
 | `libjiagu.so` / `libjgdtc.so` | 360 |
 | `libshell*.so` / `libtup.so` | 腾讯乐固 |
 | `libDexHelper.so` | 梆梆 |
-| `libexec.so` / `libexecmain.so` | 爱加密 |
+| 壳 so / 主 so 两段式 | 部分加固厂商 |
 | `libnaga.so` | 娜迦 |
 | `libnesec.so` / `libsec2023.so` | 网易易盾 |
 

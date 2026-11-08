@@ -35,6 +35,8 @@ libc（`malloc`/`memcpy`/`printf`）、C++ runtime（`operator new`）、`pthrea
 
 **钩子写法**：`UC_HOOK_CODE` 命中导入地址 → Python 模拟 → `PC = LR` 跳过原函数。
 
+> 工具：`tools/emu_setup_template.py`（复制后按 `[!] unstubbed` 日志补桩）
+
 ## 4. Harness kit（`tools/uniharness.py`）
 
 ```python
@@ -60,7 +62,7 @@ emu_run.apply_relocations(h, so, stubs)
 emu_run.run_init(h, so)
 ```
 
-## 5. 写好 hooks.py（与 `tools/emu_setup.py` 协作）
+## 5. 写好 hooks.py（与 emu_setup 协作）
 
 hooks.py 只需一个入口，拿到 Harness 全权：
 
@@ -73,8 +75,17 @@ def setup(h):
     E.install_stub(h, 0x4F6A8, my_memmove)    # 覆盖默认 _ret0 桩
 ```
 
-- **执行时机**：`map → stack/TLS → 导入桩+重定位 → JNIEnv → --poke → setup(h) → DT_INIT → syscall 层 → 调用`。setup 里能读到 `--poke` 写的内存，但 DT_INIT 之后全局还可能被覆盖。
-- **是 exec 不是 import**：hooks.py 在独立命名空间执行（`__name__ = "__emu_setup__"`），`if __name__ == "__main__"` 不生效；内部 `import emu_run` 会重新执行模块，别依赖其模块级全局（字节数组长度表因此挂在 Harness 上）。
+**两种入口都支持**，按需选：
+
+| 入口 | 签名 | 何时用 |
+|---|---|---|
+| `setup` | `setup(h)` | 只挂环境 |
+| `prepare` | `prepare(h, so_path, data) -> JavaVM*` | 需要自建 JNI/JavaVM 表（脱壳镜像、VM 壳）。**同一份脚本可同时用于 `emu_run --setup` / `probe_layout --setup` / `vmp trace --setup`** |
+
+`prepare` 在 `build_jni` 之前执行，返回值写进 `h.jni_vm`；若它已建 JNIEnv，`emu_run` 不再重复建。
+
+- **执行时机**：`map → stack/TLS → 导入桩+重定位 → 镜像清理 → prepare/setup → JNIEnv（未建时）→ --poke → DT_INIT → syscall 层 → 调用`。setup 里能读到 `--poke` 写的内存，但 DT_INIT 之后全局还可能被覆盖。
+- **是 exec 不是 import**：hooks.py 在独立命名空间执行（`__name__ = "__emu_setup__"`），`if __name__ == "__main__"` 不生效；内部 `import emu_run` 会重新执行模块，别依赖其模块级全局（字节数组长度表因此挂在 Harness 上：`h.jni_array_lens[ptr] = n` 供 `GetArrayLength`，`NewByteArray` 自动登记）。
 
 | helper | 返回 / 作用 |
 |---|---|

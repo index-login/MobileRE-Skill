@@ -110,6 +110,18 @@ Memory.scan(mod.base, mod.size, "55 48 89 E5", { onMatch: function (address, siz
 // 3. 通过 plt/got 表定位
 ```
 
+#### NativeFunction 的异常语义（必读坑）
+```javascript
+new NativeFunction(addr, 'void', [], { exceptions: 'steal' });      // 默认
+new NativeFunction(addr, 'void', [], { exceptions: 'propagate' });
+```
+| 值 | 行为 | 用途 |
+|---|---|---|
+| `'steal'`（默认） | native 段错误被**转成可捕获的 JS 异常**，进程不死、**无 tombstone** | 进程内连续调用；捕获到的 `Error: access violation accessing 0x…` **就是真内存违规**（非 Frida 假象） |
+| `'propagate'` | 段错误**直接杀进程** → 产生 tombstone | 取证：拿 `pc` → `so+offset` 归因 |
+
+**只跑 `steal` 会得出错误结论**："没崩"可能是"崩了但被吞了"。
+
 #### Interceptor 核心用法
 ```javascript
 // 标准 hook

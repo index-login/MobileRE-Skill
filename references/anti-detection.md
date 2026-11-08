@@ -54,11 +54,11 @@ Phase 1: so_loader_tracer（观测）→ 定位检测 so；需抓退出调用栈
 # 方法 1：设备上直接查
 adb shell "readelf -sW /apex/com.android.runtime/bin/linker64 | grep call_constructors"
 
-# 方法 2：离线反汇编
-adb pull /system/bin/linker64 /tmp/linker64
-llvm-objdump -d /tmp/linker64 | grep "call_constructors"
-# 示例输出（API 29）:
-# 3ca08: bc 50 00 94  bl #0x50cf8 <call_constructors>
+# 方法 2：离线查符号地址（跨平台；不用 objdump/grep）
+adb pull /system/bin/linker64 ./linker64
+python3 tools/so.py info ./linker64 --grep call_constructors
+# 输出形如（API 29）:
+# 0x00050cf8  FUNC  LOCAL  DEFAULT  .text  call_constructors
 # → offset = 0x50cf8
 ```
 
@@ -104,9 +104,7 @@ llvm-objdump -d /tmp/linker64 | grep "call_constructors"
 
 ## Phase 2（分支 B）：init_hook 抢时机（init_array 检测）
 
-so 加载流程：`do_dlopen → call_constructors → init_proc → init_array → JNI_OnLoad`
-
-普通 `android_dlopen_ext` hook 在 `call_constructors` 之后才触发，init_array 已执行完毕。必须用 `init_hook.js`。
+so 加载顺序见 `android-internals.md` §5。`android_dlopen_ext` hook 在 `call_constructors` 之后才触发，此时 init_array 已执行完毕 → 必须用 `init_hook.js` 抢在构造器之前。
 
 **init_hook 自动做三件事：**
 1. 在 call_constructors 处拦截，早于 init_array
@@ -136,7 +134,7 @@ so 加载流程：`do_dlopen → call_constructors → init_proc → init_array 
 
 若目标 app 使用加固壳（so 从 `files/` 路径动态加载），策略调整为：
 1. `frida_feature_hider` 使用 `indirectHook:true`（延迟由 init_hook 激活），避免与 exit_blocker 的 Interceptor.replace 冲突
-2. `init_hook` 的 `onModuleInit` 只监听**检测 so**（如 `libexecmain.so`），不监听**壳 so**（如 `libexec.so`）。壳 so 的 init_array 负责解密主程序，全量 NOP 会导致 SIGILL
+2. `init_hook` 的 `onModuleInit` 只监听**主 so**，不监听**壳 so**。壳 so 的 init_array 负责解密主程序，全量 NOP 会导致 SIGILL
 3. 回调中使用 `patchInitArray`（含 `hasSvc0` 扫描），只 patch 含 `svc #0` 指令的函数
 
 ---
@@ -193,6 +191,23 @@ FP.patchBatch([
 
 ---
 
+## 注入通道选择
+
+| 通道 | 时机 | 主要检测面 |
+|---|---|---|
+| attach（frida-server / 注入器） | 进程已运行 | TracerPid、注入线程 |
+| 注入 zygote + hook fork | 子进程 fork 后 | maps 里的 loader 段 / soinfo、zygote 内 hook 残留 |
+| Zygisk 模块 | preAppSpecialize（子进程） | Magisk/Zygisk 痕迹；**不引入 Xposed 特征** |
+
+- 机制（线程复制、命名空间、映射继承）见 `android-internals.md` §1/§5/§11。
+- 痕迹控制：库放私有目录或 memfd；改线程名（`tools/patch_gadget_threadnames.py`）；端口不用 27042；必要时 hidemaps 换匿名映射。
+- 注入 zygote 的三个必要条件（实测，缺一不成）：
+  1. **可读路径**：`u:r:zygote:s0` 在 Enforcing 下读不到 `/data/local/tmp` 与 `/data/user/0` → 注入期间临时 `setenforce 0`，或放 App 私有目录；
+  2. **binder 权限**：zygote 向管理端取配置需要 `allow zygote system_server binder { call transfer }` 与 `activity_service` 查找权限，否则配置时有时无；
+  3. **hide 映射**：不隐藏注入库时目标 App 会反复重启。
+
+---
+
 ## 症状速查
 
 | 症状 | 模式 | 模块组合 |
@@ -224,12 +239,11 @@ FP.patchBatch([
 - **绕过方案**: `function_patcher.patchBatch([{module:"xx.so", offset:0x...}, ...])` 直接 NOP
 - **注意事项**: 不能全量 NOP 壳 so 的 init_array，只 NOP 已知检测偏移
 
-### 模式 3: 爱加密延迟阻断
+### 模式 3: 壳 so 分两阶段加载（延迟阻断）
 
-- **来源**: 爱加密加固分析文章
-- **症状**: 加固壳先加载壳 so（`libexec.so`），解密后再动态加载主 so（`libexecmain.so`），检测线程在解密阶段已创建
+- **症状**: 加固壳先加载壳 so，解密后再动态加载主 so，检测线程在解密阶段已创建
 - **检测原理**: 多层检测 + 延迟加载，线程检测先于主 so 加载
-- **绕过方案**: `thread_blocker(blockCallers:["libexec.so"], waitForModule:[{name:"libexecmain.so", intervalMs:100, timeoutMs:30000}])`
+- **绕过方案**: `thread_blocker(blockCallers:["<shell>.so"], waitForModule:[{name:"<main>.so", intervalMs:100, timeoutMs:30000}])`
 - **注意事项**: `waitForModule` 用 dlopen RTLD_NOLOAD 轮询等待主 so 加载完成
 
 ### 模式 4: init_array SVC 直接退出

@@ -39,6 +39,8 @@ Step 2-Native: native_hooker
 | `AKIA...` / `AIza...` / `ghp_...` / `sk_live_...` | AWS/Google/GitHub/Stripe key |
 | `https://user:pass@host` | URL 凭证 |
 
+> 工具：`tools/cipher_lab.py`（白盒表/层结构/编排归因）、`tools/vmp.py`（自研字节码 VM 加密）
+
 ## 二、内存敏感数据扫描（memory_scanner）
 
 `memory_scanner.js` 做三件事：

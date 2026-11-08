@@ -6,7 +6,7 @@ description: 逆向分析自动化助手 — 攻击面枚举 → 静态逆向(JA
 
 ## 工作流程
 
-1. 用户提需求 → **第一步调用 `skill` 工具加载 `frida-mobile-security`**（决策路线总控），按 SKILL.md 任务路由表匹配意图，命中域 `references/*.md` **一次读完再动手**，后续遇到场景可反复读references/*.md
+1. 用户提需求 → **第一步调用 `skill` 工具加载 `frida-mobile-security`**（决策路线总控），按 SKILL.md 任务路由表匹配意图；**命中的域手册通读**，后续可反复查
 2. 按 SKILL.md 决策树选模块（唯一依据）→ 组合加载（`utils.js` 始终首个）
 3. 需跑检测工具时，提供命令让用户自行执行（方便截图），不在 Kilo 内运行
 4. 分析完成后写入报告
@@ -38,15 +38,21 @@ description: 逆向分析自动化助手 — 攻击面枚举 → 静态逆向(JA
 
 | 手册 | 作用 | 何时读（触发信号） |
 |------|------|-------------------|
-| `troubleshooting.md` | 崩溃 / 无输出 / hook 不生效的判定与修复 | 崩了、没输出、结果不可解释 |
-| `anti-detection.md` | 反调试/反注入对抗与隐藏 | 检出 Frida、闪退、要藏特征 |
-| `native-analysis.md` | SO 层下钻、字符串/交叉引用、离线复算 | 深挖 .so、单函数仿真（+ skill `rev-unicorn-debug`） |
-| `native-audit.md` | SO 漏洞审计环：**可达面 → 分诊 → 深审 → 追链 → 归因**（Ghidra 前置两件事） | 要审 .so 找漏洞、判断"某函数是否真被调到" |
-| `so-func-naming.md` | 无符号函数命名：符号表优先、魔数/成对调用、Ghidra 协作 | 已知地址判函数用途/算法 |
-| `behavior-analysis.md` | 行为摸底、协议还原、Intent 污点、设备交互 | 看网络/跨组件、操作设备（用 `tools/device_ui.py`） |
-| `crypto-hook.md` | 加解密监控、hook/替换套路、SSL 明文 | 找算法/密钥、改参数、伪造返回 |
-| `static-analysis.md` | 攻击面枚举、序列化、WebView、jadx | 分析类、找入口、攻击面 |
-| `unpacking.md` | 脱壳双路线：root 内存 dump（快、免注入）↔ Frida `tools/unpack.py`（可触发回填/结构级 dump/SO·codeitem） | 加固壳、提 dex、抽取壳、掉 magic |
+| `troubleshooting.md` | 崩溃/无输出/hook 不生效 | 崩了、没输出、结果不可解释 |
+| `anti-detection.md` | 反调试/反注入对抗 | 检出 Frida、闪退、藏特征 |
+| `native-analysis.md` | SO 层下钻、交叉引用、离线复算 | 深挖 .so、单函数仿真 |
+| `native-audit.md` | SO 漏洞审计（可达面优先） | 审 .so 找漏洞、判"函数是否可达" |
+| `android-internals.md` | Android 机制：zygote/ART/linker/SELinux/Binder | 写注入/hook、解释加载失败或被杀 |
+| `android-headers/` | ART 头文件（不入库，按需拉） | ArtMethod 偏移、ART 结构体 | — |
+| `so-func-naming.md` | 无符号函数命名 | 已知地址判用途/算法 |
+| `so-function-recovery.md` | 大型 SO 函数级还原方法论 | 2000+ 函数、不想重复读（流水线见 skill） |
+| `so-analysis-pipeline.md` | Ghidra API 差异、符号化规则、失败方案 | 写脚本报错、避开已否决方案 |
+| `behavior-analysis.md` | 行为摸底、协议还原、Intent 污点 | 看网络/跨组件、操作设备 |
+| `crypto-hook.md` | 加解密监控、SSL 明文 | 找算法/密钥、改参数、伪造返回 |
+| `static-analysis.md` | 攻击面枚举、序列化、WebView | 分析类、找入口 |
+| `unpacking.md` | 脱壳（root dump ↔ Frida 回填） | 加固壳、提 dex、掉 magic |
+
+> 手册间互指用 `页面.md ›「章节标题」`：跟链接时**只读那一小段**（`grep` 工具按标题取段 → `read`），不必整篇读。
 
 > 次要手册：`api-reference.md`（Frida API 字典，写自定义 hook 时查）、`articles.md`（参考文章索引）——按需在 `_index.md` 查阅。
 
@@ -66,11 +72,17 @@ description: 逆向分析自动化助手 — 攻击面枚举 → 静态逆向(JA
 │   │   ├── svc <so>                                     扫内联 syscall（反检测判断）
 │   │   ├── disasm <so> --symbol X / --addr 0x…          反汇编（函数/地址）
 │   │   └── jni <so> --symbol Java_…                     JNI 签名判型（hook 前置）
-│   ├── emu_run.py <so> --sym … [--jni]                  离线跑算法
+│   ├── emu_run.py <so> --sym … [--jni]                  离线跑算法（脱壳镜像自动清 bss/指针快照）
+│   ├── vmp.py {disasm|verify|trace|model|profile}       字节码 VM/VMP（profile 驱动，换壳只换 profile）
+│   ├── emu_setup_template.py                            --setup 脚本骨架（4 步通用 + 按日志补桩）
+│   ├── so_ledger.py <inv.tsv> --shapes … --so …         函数台账→证据分级工作队列
+│   ├── ptr_table.py <so> --scan [--classify vm]         指针表枚举/分类/反查
+│   ├── probe_layout.py <so> --entry … --at/--hook/--multi-hook   动态结构体布局
+│   ├── ghidra/ ida/                                     批量脚本（索引：tools/ghidra/README.md）
 │   ├── fsmon_run.py capture --pkg … [--pull]            看文件落地/谁写的（内核观测，不注入）；对账 diff
 │   ├── device_ui.py                                     操控设备（tap/text/shot/wait-for/launch/wake）
 │   ├── frida_run.py -f <包> -l <脚本> [-t 秒]           非交互跑 Frida（定时/自动退出）
-│   ├── unpack.py <包>                                   脱壳（一键 spawn+dump+校验）
+│   ├── unpack.py <包> [--pid|--all-pids|--host 端口]    脱壳（spawn/attach/Gadget，一键 dump+校验）
 │   ├── check-anti-inject.py / check-janus.bat / debug-gdb.py / janus_check.py  前置检测项（注入/调试/Janus）
 │   └── trace_recon.py / cipher_lab.py                   白盒分析（trace 还原 / 密文结构）
 ├── references/                     知识层手册（索引 references/_index.md）
@@ -102,6 +114,7 @@ description: 逆向分析自动化助手 — 攻击面枚举 → 静态逆向(JA
 | 设备 ID | 以 `adb devices` 实际序列号为准（arm64-v8a，USB 直连用 `-U`，多设备用 `-D <serial>`） |
 | frida-server | 用户自行管理，命名为 `fuckserver`，启动端口一般设置为8888，Agent 不负责推送/重启，注意转发端口要用-H |
 | fsmon | 设备侧 `/data/local/tmp/fsmon-android-arm64`（MIT，nowsecure/fsmon）；未装 → 自行从 Release 取 arm64 预编译 push+chmod 755，装好更新本行 |
+| NDK 工具 | `ndk-stack`（tombstone 符号化）、`llvm-objdump`（Mach-O 反汇编）用 NDK 自带；不在 PATH 就自己找/下载。静态 ELF 视图（含逐条重定位、符号大小）`so.py info --json` 已覆盖 |
 
 ## 项目目录管理
 

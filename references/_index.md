@@ -40,9 +40,18 @@
 | `anti-detection.md` | 反调试/反注入对抗：检测原理、保活、模块选择与坑 | 检出 Frida、闪退、要藏特征 | ★ |
 | `behavior-analysis.md` | 行为摸底、协议还原、Intent 污点、设备交互、内核文件事件（fsmon） | 看网络/跨组件、要操作设备、看文件落地 | ★ |
 | `crypto-hook.md` | 加解密监控、hook/替换套路、SSL 明文、内存扫描 | 找算法/密钥、改参数、伪造返回 | ★ |
-| `native-analysis.md` | SO 层下钻、Ghidra、离线仿真、字符串/交叉引用 | 深挖 .so、单函数复算 | ★ |
+| `native-analysis.md` | SO 层下钻、Ghidra、离线仿真、结构体恢复、字符串/交叉引用 | 深挖 .so、单函数复算 | ★ |
 | `native-audit.md` | SO 漏洞审计：可达面 → 分诊 → 深审（含环境能力 / malloc debug / Frida 内存守卫）→ tombstone 归因 → 函数级 fuzz | 要审 .so 找漏洞、判断"某函数是否可达"、怀疑越界/UAF/double-free | ★ |
+| `so-analysis-pipeline.md` | **Ghidra 12 API 差异表、字符串符号化规则、`DAT_` 分类、失败方案清单**（流水线本身见 skill `so-function-recovery`） | 写 Ghidra 脚本报编译错、字符串不显示、想避开已否决方案 | — |
+| `so-function-recovery.md` | **大型 SO 函数级还原方法论**：台账三层筛选、库边界用调用边密度判定、机械桩多条件判据、CFF case 块识别、VM 编码从 trace 反推、`DT_INIT` 指向函数内部、结构体动态实测、命名证据分级、完成判据（可执行流水线见 skill `so-function-recovery`） | 2000+ 函数要还原、不想重复读同一批函数、判断"分析到什么程度算完成" | ★ |
+| `vmp-analysis`（skill） | **VM/VMP 8 步执行清单**：确认是 VM → 找表 → 取 trace 字段 → 写 profile → trace → verify → disasm → 命名。含常见报错处理 | 遇到字节码 VM 壳、要复用/新建编码模型 | — |
+| `android-headers/` | ART/libdexfile 头文件（AOSP 原版）+ `art_make_structs.java` 结构体生成脚本。**头文件不入库**，用 `python3 tools/fetch_android_headers.py --tag <tag>` 按需拉；说明见 `android-headers/README.md` | 逆向 hook ART 的壳、要 ArtMethod/ClassLinker 真实偏移 |
+| `tools/probe_layout.py` | **动态结构体布局探测（通用）**：按 ELF 段自动分类槽位、指针追踪、`--setup` 挂样本专属环境 | 静态看不出结构体布局时、要验证字段含义 | — |
+| `tools/ptr_table.py` | **ELF 指针表枚举与分类（通用）**：扫连续代码指针数组、按目标分类、反查表槽位 | 找 VM 分派表/handler 表/虚表、判断某地址被哪张表引用 | — |
+| `tools/fetch_android_headers.py` | 按 AOSP tag 抓 ART 头文件（走代理） | 换目标 Android 版本时重新取头文件 | — |
+| `android-internals.md` | Android 机制：zygote/ART·ArtMethod/linker 命名空间/SELinux/PMS/Binder/检测面/加载时机 | 写注入或 hook、解释"为什么加载失败/被杀" | ★ |
 | `so-func-naming.md` | 无符号函数命名：符号表优先、魔数/成对调用/参数·返回值模式、卡壳树 | 已知地址要判函数用途/算法 | — |
+| `cross-platform.md` | 跨端框架手法：Flutter/Dart AOT（偏移基准、证书校验）、uni-app x、科蓝 Ares、Cordova+mPaas、RN/Hermes | DEX 里找不到业务逻辑、要枚举 H5 桥 | — |
 | `so-emulation.md` | 单函数离线仿真：JNI/syscall/TLS 打桩、Harness / hooks.py 协作、卡壳树 | 要复算/解密/批量试输入、写 Harness | — |
 | `static-analysis.md` | 攻击面枚举、序列化、WebView、jadx-mcp | 分析类/找入口/攻击面 | ★ |
 | `troubleshooting.md` | 故障排查：无输出/闪退/hook 不生效/完整性校验 | 崩了、没输出、结果不可解释 | ★ |
@@ -57,3 +66,4 @@
 | 文档 | 作用 | 何时读 |
 |------|------|--------|
 | `smoke-test.md` | 整套链路冒烟自检（L2/L3 回归 + 离线复算预期结果） | 回归验证 / 链路自检 |
+| `../tools/ghidra/README.md` | **Ghidra / IDA 批量脚本唯一索引**：30 个脚本的类型（class/inline）、调用方式、cfg 键、默认值来源 | 要跑批量脚本、不确定某脚本怎么调 |

@@ -211,6 +211,29 @@ Interceptor.attach(addr, {
 
 Ghidra MCP 支持反编译 + 调试（`ghidra_*` 工具），用于分析 so 的逻辑。
 
+### 3.0 Ghidra vs IDA：不是"谁更智能"，是"谁能修"
+
+两者对**正常 so** 的自动分析能力接近，差距出现在**畸形 so**（加壳/脱壳产物）上，而且差异是可解释的：
+
+| 能力 | Ghidra | IDA | 说明 |
+|------|--------|-----|------|
+| 读 `.dynsym` 导出 | 读 `sh_size` 声明的项数 | 也读 `sh_size`，但会**交叉验证 DT_HASH** | 本例：段头谎报 3 项，Ghidra 只认 1 个名字，IDA 认出全部 539 项 |
+| 重定位 | 解析 PT_DYNAMIC 的 DT_RELA，**自动应用到反编译视图** | 同样解析 | Ghidra 应用后 `DAT_` 会显示 `image_base+addend` |
+| 建函数 | 保守：只跟 `bl`/`b`/入口形态 | 激进：符号 + 启发式 + 用户脚本 | 本例 Ghidra 3837 → 修符号后 4200 |
+| 反编译质量 | 够用，命名差（`FUN_`） | 更好，尤其是 C++ 与异常处理 | 交叉验证时用 IDA |
+| 脚本 | Java/Python，MCP 可跑 inline | IDAPython，生态更成熟 | 批量处理两边都能做 |
+
+**结论**：不是 Ghidra "不够智能需要写脚本引导"，而是**两者都依赖 ELF 结构可信**。结构被伪造时，先修结构（§3.1.1），再谈工具选择。修好之后 Ghidra 完全够用；IDA 的价值在反编译可读性和交叉验证。
+
+**决策顺序**：
+
+```
+so 是加壳/脱壳产物？
+├─ 是 → 先做 C1~C6 验收（§3.5.1）→ 修段头 → 再导入
+│        └─ 修完仍缺符号 → IDA 交叉验证（它更愿意猜）
+└─ 否 → Ghidra 直接导入，按 §3.5 下钻
+```
+
 ### 3.1 工作流
 
 1. 从设备提取 so：`adb pull`（或 `scripts/utils/so_dump.js` 动态 dump）
@@ -218,8 +241,51 @@ Ghidra MCP 支持反编译 + 调试（`ghidra_*` 工具），用于分析 so 的
 3. 反编译定位关键函数
 4. 结合动态 hook 验证（native_hooker + 调用栈）
 
-### 3.2 符号/字符串定位工具
+### 3.1.1 加壳 SO 的静态前置：先信 DT_*，别信 section header
 
+部分加固壳会把 **section header 改成假值**（典型：`.dynsym` 的 `sh_size` 只声明 3 项，真实 539 项），目的是让 IDA/Ghidra/`readelf` 都看不见导出表。**权威来源永远是 PT_DYNAMIC 里的 DT_\***：
+
+| 信息 | 权威来源 | 假值表现 |
+|------|---------|---------|
+| 符号数 | `DT_HASH.nchain`（其次 `DT_GNU_HASH` 推算） | `.dynsym` 的 `sh_size` 被改小 |
+| 重定位 | `DT_RELA`/`DT_RELASZ`、`DT_JMPREL`/`DT_PLTRELSZ` | `.rela.dyn` 段被从段表抹掉 |
+| 依赖/符号名 | `DT_NEEDED`、`DT_SONAME`、`DT_STRTAB`+`DT_STRSZ` | `.dynamic` 段名可能被改 |
+
+判定公式（拿到 `nchain` 就能反推真实符号数）：
+
+```
+dynsym_entries = DT_HASH.nchain
+一致性校验：DT_SYMTAB + nchain*24 == DT_VERSYM   （本例 0x2f8 + 539*24 = 0x3580 ✓）
+```
+
+`tools/so.py info` 已按此顺序取数，并在 `broken_sections` 里直接报出伪造项：
+
+```
+.dynsym: sh_size=0x48 declares 3 entries, but DT_HASH.nchain says 539 — section header forged
+reloc_source: DT_RELA+DT_JMPREL (section headers missing/forged)
+```
+
+**这一步的收益不是"好看"，是能不能分析**。实测同一个脱壳镜像：
+
+| 指标 | 段头未修（信 sh_size） | 段头修正（信 DT_HASH） |
+|------|----------------------|----------------------|
+| Ghidra 导入符号 | 1 个（只有 `JNI_OnLoad`） | 782 个 |
+| 有名字的函数 | 1 | 730 |
+| `.text` 代码覆盖 | 57.8% | 76.7% |
+| 反编译 `JNI_OnLoad` | 全是 `FUN_xxxx`，看不出调用语义 | 子调用可读 |
+
+**修复方法**：把 `.dynsym` 的 `sh_size` 改成 `nchain*24`，把畸形 `.symtab` 改成 `SHT_NULL`。改完再导入 Ghidra。
+
+**符号建了不等于函数体建了**：Ghidra 导入符号时会先建 Function 对象，但此时还没反汇编，body 只有 1 条指令。必须**先反汇编、再删除这些空函数、再重建**，否则 `get_function_by_address` 返回 `body=1`、反编译为空。顺序错了就只能看到空壳。
+
+```java
+// 反汇编完成后，清理 body<=4 的"符号空壳"再重建
+for (Function f : fm.getFunctions(true))
+    if (f.getBody().getNumAddresses() <= 4) fm.removeFunction(f.getEntryPoint());
+// 然后按 bl/b 目标 + 入口形态 createFunction
+```
+
+### 3.2 符号/字符串定位工具
 | 工具 | 用途 |
 |------|------|
 | `tools/so.py info/strings/dump` | ELF 侦察（段/依赖/导出/导入/重定位/vaddr↔offset）/ 字符串枚举 / 按址读字节 |
@@ -231,6 +297,7 @@ Ghidra MCP 支持反编译 + 调试（`ghidra_*` 工具），用于分析 so 的
 | `tools/emu_setup.py` | emu_run 的 setup 助手库：`std_string/std_vector/call_sret/read_std_string/install_stub/patch_data_import/ctype_table/cstr`（见 §3.6） |
 | `tools/trace_recon.py` | 仿真 trace 状态重建：观测日志 → 缓冲状态序列（COPY/PASS 自动分段，支持 `--json`） |
 | `tools/cipher_lab.py` | 密码结构判定器：`layers`（层写法双轨迹判定）/ `table`（白盒表 S(Y⊕k)⊕c 反推）/ `schedule`（轮密钥→标准 AES-128 编排归因，出主密钥） |
+| `tools/vmp.py` | **字节码 VM / VMP 壳逆向**（profile 驱动）：`disasm` / `verify`（trace 校验，命中率 <95% 退出码 1）/ `trace` / `model` / `profile`。换壳只换 `tools/vmp_profiles/*.json` |
 | `tools/so.py svc` | 扫描内联 SVC 指令（检测代码特征） |
 | `tools/fix_elf.py` | 修复 ELF header（dump 后） |
 | `tools/patch_gadget_threadnames.py` | patch gadget 线程名 |
@@ -268,12 +335,58 @@ Memory.scan(mod.base, mod.size, "55 48 89 E5", { onMatch: function (address, siz
 ```
 
 ### 3.5 SO 分析顺序（`tools/so.py` 离线工具）
-
 一个 so 从"有什么"到"要 hook 什么"的标准下钻顺序（离线、可复现，不依赖 Ghidra/Frida/设备）：
 
 ```
 info/strings 发现 → strref 引用 → disasm 上下文 → jni hook 前置 → (svc 下钻 / emu_run 复算)
 ```
+
+### 3.5.1 "脱干净"的验收判据（脱壳 so 的完成定义）
+
+"dump 出来了"不等于"脱干净"。按下面 6 条逐项验收，任一条不满足，后续静态分析都会被误导：
+
+| # | 判据 | 怎么验 | 不合格的表现 |
+|---|------|--------|-------------|
+| **C1** | 段表与内存一致 | `so.py info` 的 PT_LOAD vs `adb shell cat /proc/<pid>/maps` 的 r-x/r--/rw- 区间逐条对齐 | 段数/权限/边界不符 → dump 有截断 |
+| **C2** | 代码段已解密 | 入口处磁盘是壳魔数（`UPX!` 等），内存是合法指令（`bti c` / `stp x29,x30`） | 入口仍是魔数 → 解密区没抓到 |
+| **C3** | 代码可连续反汇编 | 从入口线性反汇编，成功率 ≥ 99% | 大量非法指令 → 见下方三种成因 |
+| **C4** | 符号表可信 | `DT_HASH.nchain` == `.dynsym` 实际项数；导出函数能被 `so.py --grep` 找到 | 只认 3 个符号 → 段头伪造（见 §3.1.1） |
+| **C5** | 重定位可解析 | `so.py info` 的 `relocations` 数量 == `DT_RELASZ/24 + DT_PLTRELSZ/24` | 显示 0 条 → 段表被抹，需走 DT_RELA |
+| **C6** | 数据引用能对上 | Ghidra 里 `JNI_OnLoad` 的参数是 `&DAT_xxx` 而不是裸整数；字符串引用可跳转 | 全是 `0x781b...` 绝对地址 → `.data` 未去重定位 |
+
+**C3 不合格有三种成因，别一律判成"壳没解完"**（按排查成本从低到高）：
+
+| 成因 | 判据 | 处理 |
+|---|---|---|
+| **① dump 工具填了 `0xCC`** | 非法指令字节全是 `CC`，且集中在未映射页 | dump 脚本按 PT_LOAD 枚举（`dumpPrecise`），别用整段 dump（`dumpSimple` 会把未映射页填 `0xCC`） |
+| **② 段边界截断** | 非法指令只出现在段尾 | 先过 C1（段表 vs `/proc/<pid>/maps` 对齐）；边界不对就重 dump |
+| **③ 代码真的没解密** | 非法指令散布全文，且入口处仍是壳魔数 | 回到脱壳流程，确认抓取时机（要等解密函数跑完） |
+
+**最便宜的排除法**：若 APK 里还有原始 so，直接比 `.text` 段——差异区间就是问题范围，比反汇编扫描快得多。
+
+**C6 是最容易漏的一条**。内存 dump 的指针是**运行时绝对地址**（`0x781b3395d0`），磁盘原文件对应位置全是 0。来源有两类，必须分开处理：
+
+| 来源 | 特征 | 处理 |
+|------|------|------|
+| ELF 标准重定位 | 在 `DT_RELA` 表里有记录（`R_AARCH64_RELATIVE`，type=1027） | 值 = `base + addend`；改成 `addend` 即还原 |
+| **壳自填的函数指针表** | **不在 RELA 表里**，磁盘上是 0 | 只能扫描 `[0x781b2..., 0x781b4...)` 区间并减去模块基址 |
+
+第二类是本项目踩到的坑：`.rodata` 里有 **511 个**壳运行时填入的函数指针（含 VM 的 opcode 分派表），RELA 表完全不覆盖。不还原的话 `br x9` 分派表全是非法地址，Ghidra 反编译退化成一行 `FUN_xxx()`。
+
+```python
+# 先按 RELA 还原（精确、可验证）
+for rel in rela_table:
+    if rel.type == R_AARCH64_RELATIVE and read_u64(rel.off) == base + rel.addend:
+        write_u64(rel.off, rel.addend)
+
+# 再扫残留（壳自填，无 RELA）
+for off in range(rodata_start, data_end, 8):
+    v = read_u64(off)
+    if base <= v < base + module_size:
+        write_u64(off, v - base)
+```
+
+判据是**同一份产物在两种工具里读到同一个地址**：文件里 `0x781b3395d0`，Ghidra 读出 `0x1f35d0`（image_base 0x100000 + 0xf35d0），两侧对得上才算干净。
 
 1. **发现**：`tools/so.py info <so>` 看段/依赖/导出/导入/重定位（`--grep NAME` 直接在导出表里找函数，`--json` 供脚本消费）；`tools/so.py strings <so> --grep PAT` 找明文常量/日志串（输出 vaddr+file offset 双列）
 2. **引用**：拿到关键字符串 vaddr → `tools/so.py strref <so> 0xSTR` 反查引用点（支持 `adr` / `adrp+add` / `adrp+ldr`，混淆下 Ghidra 自动 xref 失效也能命中）
@@ -294,29 +407,124 @@ info/strings 发现 → strref 引用 → disasm 上下文 → jni hook 前置 �
 | `scan_inline_svc.py <so>` | `so.py svc <so>` |
 | `jni_sig.py <so> …` | `so.py jni <so> …` |
 
-### 3.6 复杂函数离线仿真（emu_run 广度 + setup 助手）
+### 3.5.2 字节码 VM 逆向（VMP 型壳）
 
-> 环境模拟（JNI 槽位 / syscall / TLS / 回调 / 迭代调试）见 [so-emulation.md ›「单函数离线仿真（SO Emulation）」](so-emulation.md)。
+当 `JNI_OnLoad` 只做「初始化运行时 + 启动解释器」、业务方法在 `.text` 里找不到时，业务逻辑很可能被编译成了**自定义字节码**。识别与还原路径：
+
+**第一步：认出 VM 而不是普通代码**
+
+```c
+// JNI_OnLoad 的典型形态：取运行时 → 存 JavaVM → 启动解释器 → 返回版本
+rt = FUN_xxx();                    // 分配运行时
+FUN_yyy(rt, vm);                   // 存 JavaVM
+FUN_zzz(rt, &table1, &table2, bytecode, &selector, 0);
+return FUN_vvv(rt);
+```
+
+其中第 3 个参数是**字节码指针**，第 5 个是**分派索引**。真正的解释器函数特征：
+
+- 从参数里取一个 `u8`，`lsl #3` 或 `lsl #2` 后 `ldr` 表项，再 `br` —— 跳转表分派
+- 有软件栈（`sp` 上的一块固定区域，栈顶指针存在栈槽里）
+- handler 里大量 `ldrb`/`strb` 按偏移读写那块区域
+
+**第二步：定位 opcode 表，别假设项数**
+
+表在 `.rodata`，形式是连续的函数指针数组。**不要假设 256 项**——壳普遍只放实际用到的项数（常见 100~200），其后紧跟另一张 continuation 表。两种交叉验证：
+
+1. 表后面紧跟的连续指针数组从哪开始（长度即真实项数）
+2. 解释器入口 `memcpy(dst, table, N)` 的 N
+
+工具：`python3 tools/ptr_table.py <so> --scan --only-code --classify vm` —— 按「全代码指针 + 项数是否 2 的幂」标注 handler 表候选。
+
+表里被最多 opcode 共用的那个 handler 就是 **default/nop**，可以用来判断指令流是否解对（正常字节码里它占 10~30%，乱码数据里不会集中在单个值）。
+
+**注意壳会在运行时重填这张表**：静态看是非法地址时，按 §3.5.1 的 C6 还原（`.rodata` 里不在 RELA 表内的运行时指针快照）。
+
+**第三步：从动态 trace 反推编码，不要静态猜**
+
+每条 handler 自定义 pc 推进量与操作数布局，按固定长度切分命中率接近 0。正确顺序：
+
+```
+① 反编译 handler 正文    → 看它怎么读 pc、怎么推进、操作数在哪几位
+② 仿真/真机跑通           → 拿 (pc, opcode) 序列
+③ 用 trace 反推解码公式   → 假设 op_n = f(byte[pc_n+L-1], op_{n-1})，解 f
+④ 反汇编字节码            → 输出可读清单
+```
+
+归纳出来的通用形式（换壳只改参数）：
+
+```
+op_n = decode(byte[pc_n + L - 1], op_{n-1} ^ K)
+decode(x, k) = (((A - x) & M1) | ((x - B) & M2)) ^ k
+```
+
+其中 `L` 由 handler 决定（变长）、`A/B/M1/M2/K` 是壳自己的常量。**opcode 链式差分**是这类壳的共同特征：整体 dump 出来看是均匀随机分布，不能用熵判断"这是不是字节码"。
+
+**第四步：验收（唯一的硬判据）**
+
+| 检查 | 通过标准 | 失败说明 |
+|------|---------|---------|
+| **trace 命中率** | **> 95%** | 公式错，或 profile 的常量错 |
+| opcode 值域 | 集中在几十个值 | 边界算错 |
+| default handler 占比 | 10~30% | 解码规则错 |
+| 高频 opcode | 对应 `push`/`ld`/`st`/`call` 类 handler | 表读错 |
+
+剩余未命中若能归因到某个明确分支（如"条件满足时 key 被强制"），是可解释边界，不是模型错误。
+
+**第五步：工具化 —— 用 `tools/vmp.py`**
+
+模型与引擎分离：编码模型放 `<包名>/tools/vm_profiles/<name>.json`（样本事实），
+引擎与模板在 `tools/`。`vmp.py` 会自动扫描各样本目录，`-p <name>` 直接用名字即可。
+
+```bash
+python3 tools/vmp.py profile list                          # 看有哪些现成模型
+python3 tools/vmp.py trace  <so> -p <profile> --sel 0 --out trace.json
+python3 tools/vmp.py verify <so> -p <profile> --trace trace.json   # 命中率 < 95% 退出码 1
+python3 tools/vmp.py disasm <so> -p <profile> --trace trace.json --vm <key>
+python3 tools/vmp.py model --stats                         # handler 指令模型（Ghidra 导出后）
+```
+
+**换一个壳 = 写一个 profile**，需要填：`key_xor` / `decode{4 个常量}` / `opcodes`（opcode→语义名）/ `handler_table_file_va` / `handler_count` / `bytecode_file_va`；`trace` 子命令还要 `entry_va` / `dispatch_hook_pc` / `frame_*_off`。
+
+**边界**：opcode 语义名表（`opcodes`）是逐个反编译 handler 归纳出来的，新壳只能给通用名（`op_<hex>`），随分析进展补全。
+
+### 3.6 复杂函数离线仿真（emu_run 广度 + setup 助手）> 环境模拟（JNI 槽位 / syscall / TLS 打桩）见 [so-emulation.md ›「3. 环境模拟」](so-emulation.md#3-环境模拟)；hooks.py 契约见 [›「5. 写好 hooks.py（与 emu_setup 协作）」](so-emulation.md#5-写好-hookspy与-emu_setup-协作)。
 
 设计目标：**广度优先**——尽量能模拟任意 so 函数；极难/需完整运行时的才升级 unidbg（深度），动态验证仍可走 Frida。
 
 **加载即自动处理**（无需 setup）：重定位分流（`JUMP_SLOT`→函数桩 / `GLOB_DAT`→数据单元，内置 `_ctype_` 表）、`DT_INIT_ARRAY`（C++ 全局对象）、syscall 层（`svc #0` → 常用 syscall 假实现）、内置 libc 桩（`mem*/str*/calloc/realloc/sprintf/pthread_*/ptrace/fopen/…`）。未桩导入首次命中打印 `[!] unstubbed: <name> -> 0`（避免静默 ret 0）。
 
-**复杂调用**用 `--setup hooks.py`（拿 Harness 全权）+ `tools/emu_setup.py` 助手库：
+**复杂调用**：`--setup hooks.py` + `tools/emu_setup.py` 助手库；helper 表与 libc++ 布局见 [so-emulation.md ›「5. 写好 hooks.py（与 emu_setup 协作）」](so-emulation.md#5-写好-hookspy与-emu_setup-协作)。
 
-```python
-# hooks.py —— 复杂函数（C++ 对象入参/出参、覆盖 GOT 桩）
-import emu_setup as E
-def setup(h):
-    s = E.std_string(h, b"aGVo...")        # libc++ std::string 入参
-    print(E.call_sret(h, 0x22168, [s]))     # sret(x8) 返回 std::string
-    E.install_stub(h, 0x4F6A8, my_memmove)  # 覆盖某 GOT 槽的桩
-```
+`--setup` 接受两种钩子，按需要选：
+
+| 钩子 | 签名 | 何时用 |
+|---|---|---|
+| `setup` | `setup(h)` | 只挂环境（poke/桩/额外映射） |
+| `prepare` | `prepare(h, so_path, data) -> JavaVM*` | 需要自建 JNI/JavaVM 表（脱壳镜像、VM 壳）。**与 `probe_layout --setup` / `vmp trace --setup` 同一契约**，同一份脚本三处通用 |
+
+`prepare` 在 `build_jni` **之前**执行，返回值写进 `h.jni_vm`，之后 `--args "vm,0"` 才能解析 `vm` 记号。
+`env` 同理：`prepare` 若已建 JNIEnv，就不再重复建。
+
+> 脱壳镜像上跑 VM 壳入口时通常要加 `--no-init`：`DT_INIT` 可能指向 CFF 内部块，跑进去会不返回。
 
 - CLI 便捷项：`--ret-str`（sret 返回 `std::string` 自动解码）、`--out-arg N:LEN`（调用后 dump 第 N 参指向缓冲）、`--no-init` / `--no-syscalls`（关自动项）
-- JNI 字节数组：`h.jni_array_lens[ptr] = n`（供 `GetArrayLength`；`NewByteArray` 自动登记）
-- 坑：`--setup` 脚本有 `__file__`，但 `import emu_run` 会得到**第二模块实例**（主程序以 `__main__` 运行）→ 不要依赖 emu_run 模块全局，用 Harness 属性（如 `h.jni_array_lens`）
 - **升级线**：需真 linker / 真 syscall / 线程 / Java VM 语义 → unidbg；动态调试 → Frida
+
+### 3.7 结构体恢复（偏移聚合）
+
+只在伪代码到处是 `*(a1 + 0x18)`、`ldr w8, [x0, #0xc]` 时才做；判断单个函数用途不需要。
+
+1. **聚合**：以同一入参（一般是 x0 / `this`）为键，收集全部 `ldr/str/ldrb/strh` 的偏移与访问宽度（`w`=4、`x`=8、`b`=1、`h`=2 字节）。
+2. **扩展**：从直接 caller/callee 起一跳一跳收；**偏移集合不再增长就停**（不设终止条件会顺着调用图爆掉）。
+3. **大小** = `max(offset) + 该偏移的访问宽度`。
+4. **类型判据看指令**：被 `blr` 调用 → 函数指针；offset 0 处 `ldr x8,[x0]; ldr x8,[x8,#N]; blr x8` → vtable；喂 `strlen/printf` → char*；`and #1`/`tst` → flags；`add/sub #1` 且成对出现 → refcount；两个指针字段互相回指 → 链表。
+
+**sret 例外**：`x8` 指向返回缓冲，不是 `this`；从 x8 聚合出的偏移不要混进结构体。
+
+**闭环验证（关键）**：把布局建成 Ghidra struct（datatype 组工具，名字现查 `ghidra_search_tools "struct"`），再**重反编译所有相关函数**并套用该类型——错位的偏移会直接显形，比读注释可靠。全函数一致后写进 REPORT.md；无 Ghidra 时用 `so.py disasm` 按同样规则聚合。
+
+> 工具：`python3 tools/probe_layout.py <so> --entry JNI_OnLoad --at/--hook/--multi-hook`（`--help` 看参数）
 
 ---
 
@@ -415,7 +623,7 @@ if (syscall) {
 
 `svc_tracer.js` 用 Stalker 追踪 SVC 指令。性能开销大，注意：
 - 设 `duration: 30` 只追踪前 30 秒
-- 设 `targetModules: ["libexec.so"]` 只追踪检测 SO
+- 设 `targetModules: ["<shell>.so"]` 只追踪检测 SO
 - 设 `filterSyscalls: [93, 94, 129, 131]` 只看 kill/exit
 - 大量 `[anon:rwx]` 输出 = 匿名 RX 段中的检测代码，记录 PC 地址用于 function_patcher
 

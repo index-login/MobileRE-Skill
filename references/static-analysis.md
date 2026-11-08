@@ -166,6 +166,8 @@ Google Auth Library `OAuth2Credentials`：`transportFactoryClassName` 字段可�
 | `intent://` scheme | Intent 重定向 |
 | `loadUrl` 参数可控 | URL 注入 |
 
+桥的具体形态随容器而变（WVJB / Cordova / mPaas / uni-app），方法名枚举与 H5 侧鉴权见 [cross-platform.md ›「跨端框架分析（实测）」](cross-platform.md)。
+
 ---
 
 ## 四、Deep Link / Content Provider
@@ -208,7 +210,7 @@ Google Auth Library `OAuth2Credentials`：`transportFactoryClassName` 字段可�
 
 ### Manifest 解析失败（jadx 乱码/二进制）
 
-- 症状：jadx 输出二进制 AXML（头 `03 00 0C 00`），apktool 报 `got: 0x000c0003` → 爱加密魔改（首 chunk 插 4 字节 + headerSize 谎报 0x000C）
+- 症状：jadx 输出二进制 AXML（头 `03 00 0C 00`），apktool 报 `got: 0x000c0003` → 魔改 AXML（首 chunk 插 4 字节 + headerSize 谎报 0x000C）
 - 修复：`tools/fix_axml.py`（删 4 字节填充 + headerSize 回 8 + size 减 4）
   ```bash
   python3 tools/fix_axml.py -i base.apk -o base_fixed.apk

@@ -19,8 +19,8 @@ Thumbs.db
 tmp/
 temp/
 
-# 每个包的分析目录不入库：任何形如 x.y(.z) 的包名目录（com.* / cn.* / org.* 等；模板在 .kilo/skill/ 内追踪）
-[!.]*.*/
+# 每个包的分析目录不入库：**仅顶层**、且形如 x.y(.z) 的包名目录（com.* / cn.* / org.* 等）。
+/[!.]*.*/
 
 # Frida 运行产物
 *.dump
@@ -33,8 +33,18 @@ __pycache__/
 /.kilo/plans
 kilo.json
 
+# AOSP 头文件：纯公开数据（android.googlesource.com），按需拉取不入库
+#   拉取：python3 tools/fetch_android_headers.py --tag android-10.0.0_r1
+#   说明：references/android-headers/README.md（入库）
+references/android-headers/*/art/*.h
+
 # 反馈日志（本地保留，不入库；覆盖 skill 内嵌套路径）
 **/feedback/FEEDBACK.md
 
 # 冒烟测试用例（本地保留，不入库）
 references/smoke-test.md
+
+# 注入跳板编译产物（源码入库，二进制不入库）
+# 注入跳板：只提交源码，二进制产物不入库
+tools/inject/**/*.so
+tools/inject/stub/*.jar

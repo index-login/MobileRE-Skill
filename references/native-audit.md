@@ -53,6 +53,8 @@ REPL：`ApiReach.report()` 打印「可达 / 未命中」两张表；`ApiReach.m
 `nativeOpenMemDocument`（`byte[]` → 拷贝缓冲泄漏）在该 App 均为**代码级不可达**；
 可达面落在 **fd 读取 + 渲染 + 书签** 这条路径上。
 
+> 工具：`scripts/monitors/api_reach.js`（真机可达性统计）、`tools/so.py info --grep`（静态导出面）
+
 ---
 
 ## 三、② 分诊（决定审计顺序）

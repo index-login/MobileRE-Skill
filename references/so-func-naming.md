@@ -124,7 +124,7 @@ len = sub_XXX(str);                        // strlen 类
 | 导出表很大但地址对不上 | `.dynsym` 的 `st_value` 与实际不一致（重定位/加密壳）→ 先修 ELF 或动态取模块基址 |
 | 混淆（OLLVM 等） | 常量/结构失效：改用动态 hook 取参数与返回值（`scripts/monitors/native_hooker.js`，见 [native-analysis.md ›「三、SO 动态分析」](native-analysis.md)），或 `emu_run` 复算（[「3.6 复杂函数离线仿真」](native-analysis.md)） |
 | JNI 动态注册 | `scripts/utils/scan_register_natives.js` 拿到 `fnPtr` → 直接对应 Java 方法名（见 [native-analysis.md ›「五、JNI 层分析」](native-analysis.md)） |
-| 需要离线复算但依赖运行时 | `tools/emu_run.py`（[native-analysis.md ›「3.6 复杂函数离线仿真（emu_run 广度 + setup 助手）」](native-analysis.md)）或 skill `rev-unicorn-debug` |
+| 需要离线复算但依赖运行时 | `tools/emu_run.py`（[native-analysis.md ›「3.6 复杂函数离线仿真（emu_run 广度 + setup 助手）」](native-analysis.md)）或 skill `so-emulate` |
 | 静态链接库（OpenSSL/BoringSSL 等） | 用特征字符串 + 版本串定位（如 `SSL3_RT_MAX_PLAIN_LENGTH`、`dtls1_read_failed`），再对照上游源码命名 |
 | 函数被内联/拆分 | 以调用点的行为为准，不要强求函数边界 |
 | 反编译里 callee 全是 `func_0x…` | 先跑 `tools/ghidra/so_audit_prep.java` 做 PLT 命名；否则成对调用/返回值模式都判不了 |
@@ -176,10 +176,10 @@ len = sub_XXX(str);                        // strlen 类
 | 命名结论 | 去处 |
 |---|---|
 | 加解密 / 哈希 / 编码 | [crypto-hook.md ›「一、加密算法分析决策树」](crypto-hook.md)：hook 明文、密钥、SSL |
-| 参数是对象/结构体 | skill `rev-struct`：偏移聚合恢复布局 |
+| 参数是对象/结构体 | [native-analysis.md ›「3.7 结构体恢复（偏移聚合）」](native-analysis.md#37-结构体恢复偏移聚合) |
 | 能被外部输入走到 | [native-audit.md ›「SO 漏洞审计（可达面优先）」](native-audit.md)：可达性 → 分诊 → 深审 |
 | 需要真实参数/运行时 | [native-analysis.md ›「三、SO 动态分析」](native-analysis.md)：`native_hooker` |
-| 需要离线复算 | [native-analysis.md ›「3.6 复杂函数离线仿真（emu_run 广度 + setup 助手）」](native-analysis.md)：`emu_run` / skill `rev-unicorn-debug` |
+| 需要离线复算 | [native-analysis.md ›「3.6 复杂函数离线仿真（emu_run 广度 + setup 助手）」](native-analysis.md)：`emu_run` / skill `so-emulate` |
 
 ## 9. 只能靠模型判断的部分（链接解决不了）
 
